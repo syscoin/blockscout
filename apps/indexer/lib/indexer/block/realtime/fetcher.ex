@@ -32,7 +32,7 @@ defmodule Indexer.Block.Realtime.Fetcher do
   alias Explorer.Counters.AverageBlockTime
   alias Indexer.{Block, Tracer}
   alias Indexer.Block.Realtime.TaskSupervisor
-  alias Indexer.Fetcher.CoinBalance
+  alias Indexer.Fetcher.{CoinBalance, OptimismWithdrawal}
   alias Indexer.Prometheus
   alias Indexer.Transform.Addresses
   alias Timex.Duration
@@ -230,9 +230,10 @@ defmodule Indexer.Block.Realtime.Fetcher do
 
   defp start_fetch_and_import(number, block_fetcher, previous_number) do
     start_at = determine_start_at(number, previous_number)
+    is_reorg = reorg?(number, previous_number)
 
     for block_number_to_fetch <- start_at..number do
-      args = [block_number_to_fetch, block_fetcher, reorg?(number, previous_number)]
+      args = [block_number_to_fetch, block_fetcher, is_reorg]
       Task.Supervisor.start_child(TaskSupervisor, __MODULE__, :fetch_and_import_block, args)
     end
   end
@@ -262,6 +263,9 @@ defmodule Indexer.Block.Realtime.Fetcher do
     Indexer.Logger.metadata(
       fn ->
         if reorg? do
+          # we need to remove all rows from `op_withdrawals` table previously written starting from reorg block number
+          OptimismWithdrawal.remove(block_number_to_fetch)
+
           # give previous fetch attempt (for same block number) a chance to finish
           # before fetching again, to reduce block consensus mistakes
           :timer.sleep(@reorg_delay)
