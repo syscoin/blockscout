@@ -21,6 +21,7 @@ defmodule Indexer.Supervisor do
     EmptyBlocksSanitizer,
     InternalTransaction,
     OptimismOutputRoot,
+    OptimismWithdrawal,
     PendingBlockOperationsSanitizer,
     PendingTransaction,
     ReplacedTransaction,
@@ -129,6 +130,8 @@ defmodule Indexer.Supervisor do
          [[json_rpc_named_arguments: json_rpc_named_arguments, memory_monitor: memory_monitor]]},
         {ReplacedTransaction.Supervisor, [[memory_monitor: memory_monitor]]},
         {OptimismOutputRoot.Supervisor, [[memory_monitor: memory_monitor]]},
+        {OptimismWithdrawal.Supervisor,
+         [[memory_monitor: memory_monitor, json_rpc_named_arguments: json_rpc_named_arguments]]},
 
         # Out-of-band fetchers
         {CoinBalanceOnDemand.Supervisor, [json_rpc_named_arguments]},
