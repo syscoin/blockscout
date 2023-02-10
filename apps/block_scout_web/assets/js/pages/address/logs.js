@@ -74,7 +74,7 @@ if ($('[data-page="address-logs"]').length) {
     const topic = $('[data-search-field]').val()
     const addressHashPlain = store.getState().addressHash
     const addressHashChecksum = addressHashPlain && utils.toChecksumAddress(addressHashPlain)
-    const path = `${process.env.NETWORK_PATH}/search-logs?topic=${topic}&address_id=${addressHashChecksum}`
+    const path = `/search-logs?topic=${topic}&address_id=${addressHashChecksum}`
     loadPage(store, path)
   }
 

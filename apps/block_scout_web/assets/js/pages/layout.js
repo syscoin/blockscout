@@ -175,7 +175,7 @@ const search = (value) => {
   analytics.trackEvent(eventName, eventProperties)
 
   if (value) {
-    window.location.href = `${process.env.NETWORK_PATH}/search?q=${value}`
+    window.location.href = `/search?q=${value}`
   }
 }
 
