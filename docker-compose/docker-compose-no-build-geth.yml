@@ -29,7 +29,7 @@ services:
       - db
       - smart-contract-verifier
       - redis_db
-    image: blockscout/blockscout:${DOCKER_TAG:-latest}
+    image: sidhujag/blockscout-bedrock
     pull_policy: always
     restart: always
     container_name: 'blockscout'
@@ -42,11 +42,12 @@ services:
       -  ./envs/common-blockscout.env
     environment:
         ETHEREUM_JSONRPC_VARIANT: 'geth'
-        BLOCK_TRANSFORMER: 'clique'
-        ETHEREUM_JSONRPC_HTTP_URL: http://host.docker.internal:8545/
+        BLOCK_TRANSFORMER: 'base'
+        ETHEREUM_JSONRPC_HTTP_URL: https://bedrock.rollux.com:9545/
         DATABASE_URL: postgresql://postgres:@host.docker.internal:7432/blockscout?ssl=false
         ECTO_USE_SSL: 'false'
         SECRET_KEY_BASE: '56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN'
+
     ports:
       - 4000:4000
     volumes:
