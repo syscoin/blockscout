@@ -38,7 +38,8 @@ defmodule Indexer.Block.Fetcher do
     AddressTokenBalances,
     MintTransfers,
     OptimismWithdrawals,
-    TokenTransfers
+    TokenTransfers,
+    TransactionActions
   }
 
   alias Indexer.Transform.Blocks, as: TransformBlocks
@@ -138,6 +139,7 @@ defmodule Indexer.Block.Fetcher do
          %{logs: logs, receipts: receipts} = receipt_params,
          transactions_with_receipts = Receipts.put(transactions_params_without_receipts, receipts),
          %{token_transfers: token_transfers, tokens: tokens} = TokenTransfers.parse(logs),
+         %{transaction_actions: transaction_actions} = TransactionActions.parse(logs),
          %{mint_transfers: mint_transfers} = MintTransfers.parse(logs),
          optimism_withdrawals =
            if(callback_module == Indexer.Block.Realtime.Fetcher, do: OptimismWithdrawals.parse(logs), else: []),
@@ -150,7 +152,8 @@ defmodule Indexer.Block.Fetcher do
              logs: logs,
              mint_transfers: mint_transfers,
              token_transfers: token_transfers,
-             transactions: transactions_with_receipts
+             transactions: transactions_with_receipts,
+             transaction_actions: transaction_actions
            }),
          coin_balances_params_set =
            %{
@@ -169,6 +172,8 @@ defmodule Indexer.Block.Fetcher do
          beneficiaries_with_gas_payment =
            beneficiaries_with_gas_payment(blocks, beneficiary_params_set, transactions_with_receipts),
          address_token_balances = AddressTokenBalances.params_set(%{token_transfers_params: token_transfers}),
+         transaction_actions =
+           Enum.map(transaction_actions, fn action -> Map.put(action, :data, Map.delete(action.data, :block_number)) end),
          {:ok, inserted} <-
            __MODULE__.import(
              state,
@@ -184,7 +189,8 @@ defmodule Indexer.Block.Fetcher do
                optimism_withdrawals: %{params: optimism_withdrawals},
                token_transfers: %{params: token_transfers},
                tokens: %{on_conflict: :nothing, params: tokens},
-               transactions: %{params: transactions_with_receipts}
+               transactions: %{params: transactions_with_receipts},
+               transaction_actions: %{params: transaction_actions}
              }
            ) do
       Prometheus.Instrumenter.block_batch_fetch(fetch_time, callback_module)

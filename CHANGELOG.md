@@ -4,14 +4,21 @@
 
 ### Features
 
+- [#6838](https://github.com/blockscout/blockscout/pull/6838) - Disable dark mode env var
 - [#6744](https://github.com/blockscout/blockscout/pull/6744) - API v2: smart contracts verification
 - [#6763](https://github.com/blockscout/blockscout/pull/6763) - Permanent UI dark mode
 - [#6721](https://github.com/blockscout/blockscout/pull/6721) - Implement fetching internal transactions from callTracer
 - [#6541](https://github.com/blockscout/blockscout/pull/6541) - Integrate sig provider
-- [#6712](https://github.com/blockscout/blockscout/pull/6712) - API v2 update
+- [#6712](https://github.com/blockscout/blockscout/pull/6712), [#6798](https://github.com/blockscout/blockscout/pull/6798) - API v2 update
+- [#6582](https://github.com/blockscout/blockscout/pull/6582) - Transaction actions indexer
 
 ### Fixes
 
+- [#6859](https://github.com/blockscout/blockscout/pull/6859) - Fix task restart in transaction actions fetcher
+- [#6860](https://github.com/blockscout/blockscout/pull/6860) - JSON RPC to CSP header
+- [#6831](https://github.com/blockscout/blockscout/pull/6831) - Copy of [#6028](https://github.com/blockscout/blockscout/pull/6028)
+- [#6832](https://github.com/blockscout/blockscout/pull/6832) - Transaction actions fix
+- [#6827](https://github.com/blockscout/blockscout/pull/6827) - Fix handling unknown calls from `callTracer`
 - [#6793](https://github.com/blockscout/blockscout/pull/6793) - Change sig-provider default image tag to main
 - [#6777](https://github.com/blockscout/blockscout/pull/6777) - Fix -1 transaction counter
 - [#6746](https://github.com/blockscout/blockscout/pull/6746) - Fix -1 address counter
@@ -20,9 +27,15 @@
 - [#6740](https://github.com/blockscout/blockscout/pull/6740) - Fix tokens deadlock
 - [#6759](https://github.com/blockscout/blockscout/pull/6759) - Add `jq` in docker image
 - [#6779](https://github.com/blockscout/blockscout/pull/6779) - Fix missing ranges bounds clearing
+- [#6652](https://github.com/blockscout/blockscout/pull/6652) - Fix geth transaction tracer
 
 ### Chore
 
+- [#6853](https://github.com/blockscout/blockscout/pull/6853) - Fix 503 page
+- [#6845](https://github.com/blockscout/blockscout/pull/6845) - Extract Docker-compose services into separate files
+- [#6839](https://github.com/blockscout/blockscout/pull/6839) - Add cache to transaction actions parser
+- [#6834](https://github.com/blockscout/blockscout/pull/6834) - Take into account FIRST_BLOCK in "Total blocks" counter on the main page
+- [#6340](https://github.com/blockscout/blockscout/pull/6340) - Rollback to websocket_client 1.3.0
 - [#6786](https://github.com/blockscout/blockscout/pull/6786) - Refactor `try rescue` statements to keep stacktrace
 - [#6695](https://github.com/blockscout/blockscout/pull/6695) - Process errors and warnings with enables check-js feature in VS code
 
