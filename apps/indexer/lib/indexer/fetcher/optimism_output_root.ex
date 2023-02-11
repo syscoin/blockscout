@@ -10,13 +10,11 @@ defmodule Indexer.Fetcher.OptimismOutputRoot do
 
   import Ecto.Query
 
-  import EthereumJSONRPC,
-    only: [json_rpc: 2, fetch_block_number_by_tag: 2, quantity_to_integer: 1]
+  import EthereumJSONRPC, only: [json_rpc: 2, quantity_to_integer: 1]
 
-  alias ABI.TypeDecoder
   alias EthereumJSONRPC.Block.ByNumber
   alias Explorer.{Chain, Repo}
-  alias Explorer.Chain.{Data, OptimismOutputRoot}
+  alias Explorer.Chain.OptimismOutputRoot
   alias Indexer.BoundQueue
   alias Indexer.Fetcher.Optimism
 
@@ -49,8 +47,8 @@ defmodule Indexer.Fetcher.OptimismOutputRoot do
     with {:start_block_l1_undefined, false} <- {:start_block_l1_undefined, is_nil(env[:start_block_l1])},
          optimism_rpc_l1 <- Application.get_env(:indexer, :optimism_rpc_l1),
          {:rpc_l1_undefined, false} <- {:rpc_l1_undefined, is_nil(optimism_rpc_l1)},
-         {:output_oracle_valid, true} <- {:output_oracle_valid, is_address?(env[:output_oracle])},
-         start_block_l1 <- parse_integer(env[:start_block_l1]),
+         {:output_oracle_valid, true} <- {:output_oracle_valid, Optimism.is_address?(env[:output_oracle])},
+         start_block_l1 <- Optimism.parse_integer(env[:start_block_l1]),
          false <- is_nil(start_block_l1),
          true <- start_block_l1 > 0,
          {last_l1_block_number, last_l1_tx_hash} <- get_last_l1_item(),
@@ -59,7 +57,7 @@ defmodule Indexer.Fetcher.OptimismOutputRoot do
          json_rpc_named_arguments <- json_rpc_named_arguments(optimism_rpc_l1),
          {:ok, last_l1_tx} <- Optimism.get_transaction_by_hash(last_l1_tx_hash, json_rpc_named_arguments),
          {:l1_tx_not_found, false} <- {:l1_tx_not_found, !is_nil(last_l1_tx_hash) && is_nil(last_l1_tx)},
-         {:ok, last_safe_block} <- get_block_number_by_tag("safe", json_rpc_named_arguments),
+         {:ok, last_safe_block} <- Optimism.get_block_number_by_tag("safe", json_rpc_named_arguments),
          first_block <- max(last_safe_block - @block_check_interval_range_size, 1),
          {:ok, first_block_timestamp} <- get_block_timestamp_by_number(first_block, json_rpc_named_arguments),
          {:ok, last_safe_block_timestamp} <- get_block_timestamp_by_number(last_safe_block, json_rpc_named_arguments) do
@@ -185,7 +183,7 @@ defmodule Indexer.Fetcher.OptimismOutputRoot do
       end)
 
     new_start_block = last_written_block + 1
-    {:ok, new_end_block} = get_block_number_by_tag("latest", json_rpc_named_arguments, 100_000_000)
+    {:ok, new_end_block} = Optimism.get_block_number_by_tag("latest", json_rpc_named_arguments, 100_000_000)
 
     if new_end_block == last_written_block do
       # there is no new block, so wait for some time to let the chain issue the new block
@@ -225,7 +223,7 @@ defmodule Indexer.Fetcher.OptimismOutputRoot do
 
   defp events_to_output_roots(events) do
     Enum.map(events, fn event ->
-      [l1_timestamp] = decode_data(event["data"], [{:uint, 256}])
+      [l1_timestamp] = Optimism.decode_data(event["data"], [{:uint, 256}])
       {:ok, l1_timestamp} = DateTime.from_unix(l1_timestamp)
 
       %{
@@ -245,7 +243,7 @@ defmodule Indexer.Fetcher.OptimismOutputRoot do
     # infinite loop
     # credo:disable-for-next-line
     Enum.reduce_while(Stream.iterate(0, &(&1 + 1)), 0, fn _i, prev_latest ->
-      {:ok, latest} = get_block_number_by_tag("latest", json_rpc_named_arguments, 100_000_000)
+      {:ok, latest} = Optimism.get_block_number_by_tag("latest", json_rpc_named_arguments, 100_000_000)
 
       if latest < prev_latest do
         Logger.warning("Reorg detected: previous latest block ##{prev_latest}, current latest block ##{latest}.")
@@ -306,27 +304,6 @@ defmodule Indexer.Fetcher.OptimismOutputRoot do
     query
     |> Repo.one()
     |> Kernel.||({0, nil})
-  end
-
-  defp get_block_number_by_tag(tag, json_rpc_named_arguments, retries_left \\ 3) do
-    case fetch_block_number_by_tag(tag, json_rpc_named_arguments) do
-      {:ok, block_number} ->
-        {:ok, block_number}
-
-      {:error, message} ->
-        retries_left = retries_left - 1
-
-        error_message = "Cannot fetch #{tag} block number. Error: #{inspect(message)}"
-
-        if retries_left <= 0 do
-          Logger.error(error_message)
-          {:error, message}
-        else
-          Logger.error("#{error_message} Retrying...")
-          :timer.sleep(3000)
-          get_block_number_by_tag(tag, json_rpc_named_arguments, retries_left)
-        end
-    end
   end
 
   defp get_block_timestamp_by_number(number, json_rpc_named_arguments, retries_left \\ 3) do
@@ -405,15 +382,6 @@ defmodule Indexer.Fetcher.OptimismOutputRoot do
     end
   end
 
-  defp parse_integer(integer_string) when is_binary(integer_string) do
-    case Integer.parse(integer_string) do
-      {integer, ""} -> integer
-      _ -> nil
-    end
-  end
-
-  defp parse_integer(_integer_string), do: nil
-
   defp json_rpc_named_arguments(optimism_rpc_l1) do
     [
       transport: EthereumJSONRPC.HTTP,
@@ -427,29 +395,5 @@ defmodule Indexer.Fetcher.OptimismOutputRoot do
         ]
       ]
     ]
-  end
-
-  defp is_address?(value) when is_binary(value) do
-    String.match?(value, ~r/^0x[[:xdigit:]]{40}$/i)
-  end
-
-  defp is_address?(_value) do
-    false
-  end
-
-  defp decode_data("0x", types) do
-    for _ <- types, do: nil
-  end
-
-  defp decode_data("0x" <> encoded_data, types) do
-    encoded_data
-    |> Base.decode16!(case: :mixed)
-    |> TypeDecoder.decode_raw(types)
-  end
-
-  defp decode_data(%Data{} = data, types) do
-    data
-    |> Data.to_string()
-    |> decode_data(types)
   end
 end

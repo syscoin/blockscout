@@ -10,12 +10,10 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
 
   import Ecto.Query
 
-  import EthereumJSONRPC,
-    only: [fetch_block_number_by_tag: 2, quantity_to_integer: 1]
+  import EthereumJSONRPC, only: [quantity_to_integer: 1]
 
-  alias ABI.TypeDecoder
   alias Explorer.{Chain, Repo}
-  alias Explorer.Chain.{Data, Log, OptimismWithdrawal}
+  alias Explorer.Chain.{Log, OptimismWithdrawal}
   alias Indexer.Fetcher.Optimism
 
   # 32-byte signature of the event MessagePassed(uint256 indexed nonce, address indexed sender, address indexed target, uint256 value, uint256 gasLimit, bytes data, bytes32 withdrawalHash)
@@ -44,18 +42,21 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
     env = Application.get_all_env(:indexer)[__MODULE__]
 
     with {:start_block_l2_undefined, false} <- {:start_block_l2_undefined, is_nil(env[:start_block_l2])},
-         {:message_passer_valid, true} <- {:message_passer_valid, is_address?(env[:message_passer])},
-         start_block_l2 <- parse_integer(env[:start_block_l2]),
+         {:message_passer_valid, true} <- {:message_passer_valid, Optimism.is_address?(env[:message_passer])},
+         start_block_l2 <- Optimism.parse_integer(env[:start_block_l2]),
          false <- is_nil(start_block_l2),
          true <- start_block_l2 > 0,
          {last_l2_block_number, last_l2_tx_hash} <- get_last_l2_item(),
+         {:ok, safe_block} = Optimism.get_block_number_by_tag("safe", json_rpc_named_arguments),
          {:start_block_l2_valid, true} <-
-           {:start_block_l2_valid, start_block_l2 <= last_l2_block_number || last_l2_block_number == 0},
+           {:start_block_l2_valid,
+            (start_block_l2 <= last_l2_block_number || last_l2_block_number == 0) && start_block_l2 <= safe_block},
          {:ok, last_l2_tx} <- Optimism.get_transaction_by_hash(last_l2_tx_hash, json_rpc_named_arguments),
          {:l2_tx_not_found, false} <- {:l2_tx_not_found, !is_nil(last_l2_tx_hash) && is_nil(last_l2_tx)} do
       {:ok,
        %{
          start_block: max(start_block_l2, last_l2_block_number),
+         safe_block: safe_block,
          message_passer: env[:message_passer],
          json_rpc_named_arguments: json_rpc_named_arguments
        }, {:continue, start_block_l2}}
@@ -106,16 +107,19 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
   @impl GenServer
   def handle_info(
         :find_new_events,
-        %{start_block: start_block, message_passer: message_passer, json_rpc_named_arguments: json_rpc_named_arguments} =
-          state
+        %{
+          start_block: start_block,
+          safe_block: safe_block,
+          message_passer: message_passer,
+          json_rpc_named_arguments: json_rpc_named_arguments
+        } = state
       ) do
-    {:ok, safe_block_number} = get_block_number_by_tag("safe", json_rpc_named_arguments)
-    fill_between_blocks(start_block, safe_block_number, message_passer, json_rpc_named_arguments, true)
-    fill_between_blocks(start_block, safe_block_number, message_passer, json_rpc_named_arguments, false)
+    # find and fill all events between start_block and "safe" block
+    fill_block_range(start_block, safe_block, message_passer, json_rpc_named_arguments)
 
-    {:ok, latest_block_number} = get_block_number_by_tag("latest", json_rpc_named_arguments)
-    fill_between_blocks(safe_block_number + 1, latest_block_number, message_passer, json_rpc_named_arguments, true)
-    fill_between_blocks(safe_block_number + 1, latest_block_number, message_passer, json_rpc_named_arguments, false)
+    # find and fill all events between "safe" and "latest" block (excluding "safe")
+    {:ok, latest_block} = Optimism.get_block_number_by_tag("latest", json_rpc_named_arguments)
+    fill_block_range(safe_block + 1, latest_block, message_passer, json_rpc_named_arguments)
 
     {:stop, :normal, state}
   end
@@ -125,7 +129,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
   end
 
   def event_to_withdrawal(second_topic, data, l2_tx_hash, l2_block_number) do
-    [_value, _gas_limit, _data, withdrawal_hash] = decode_data(data, [{:uint, 256}, {:uint, 256}, :bytes, {:bytes, 32}])
+    [_value, _gas_limit, _data, withdrawal_hash] = Optimism.decode_data(data, [{:uint, 256}, {:uint, 256}, :bytes, {:bytes, 32}])
 
     %{
       msg_nonce: Decimal.new(quantity_to_integer(second_topic)),
@@ -183,7 +187,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
           )
 
         query
-        |> Repo.all()
+        |> Repo.all(timeout: :infinity)
         |> Enum.map(fn {second_topic, data, l2_tx_hash, l2_block_number} ->
           event_to_withdrawal(second_topic, data, l2_tx_hash, l2_block_number)
         end)
@@ -217,7 +221,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
     Enum.count(withdrawals)
   end
 
-  defp fill_between_blocks(l2_block_start, l2_block_end, message_passer, json_rpc_named_arguments, scan_db) do
+  defp fill_block_range(l2_block_start, l2_block_end, message_passer, json_rpc_named_arguments, scan_db) do
     chunks_number =
       if scan_db do
         1
@@ -254,6 +258,13 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
     end)
   end
 
+  defp fill_block_range(start_block, end_block, message_passer, json_rpc_named_arguments) do
+    fill_block_range(start_block, end_block, message_passer, json_rpc_named_arguments, true)
+    fill_msg_nonce_gaps(start_block, message_passer, json_rpc_named_arguments, false)
+    {last_l2_block_number, _} = get_last_l2_item()
+    fill_block_range(max(start_block, last_l2_block_number), end_block, message_passer, json_rpc_named_arguments, false)
+  end
+
   defp fill_msg_nonce_gaps(start_block_l2, message_passer, json_rpc_named_arguments, scan_db \\ true) do
     nonce_min = Repo.aggregate(OptimismWithdrawal, :min, :msg_nonce)
     nonce_max = Repo.aggregate(OptimismWithdrawal, :max, :msg_nonce)
@@ -272,7 +283,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
       |> Enum.zip(new_ends)
       |> Enum.each(fn {l2_block_start, l2_block_end} ->
         withdrawals_count =
-          fill_between_blocks(l2_block_start, l2_block_end, message_passer, json_rpc_named_arguments, scan_db)
+          fill_block_range(l2_block_start, l2_block_end, message_passer, json_rpc_named_arguments, scan_db)
 
         if withdrawals_count > 0 do
           log_fill_msg_nonce_gaps(scan_db, l2_block_start, l2_block_end, withdrawals_count)
@@ -282,27 +293,6 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
       if scan_db do
         fill_msg_nonce_gaps(start_block_l2, message_passer, json_rpc_named_arguments, false)
       end
-    end
-  end
-
-  defp get_block_number_by_tag(tag, json_rpc_named_arguments, retries_left \\ 3) do
-    case fetch_block_number_by_tag(tag, json_rpc_named_arguments) do
-      {:ok, block_number} ->
-        {:ok, block_number}
-
-      {:error, message} ->
-        retries_left = retries_left - 1
-
-        error_message = "Cannot fetch #{tag} block number. Error: #{inspect(message)}"
-
-        if retries_left <= 0 do
-          Logger.error(error_message)
-          {:error, message}
-        else
-          Logger.error("#{error_message} Retrying...")
-          :timer.sleep(3000)
-          get_block_number_by_tag(tag, json_rpc_named_arguments, retries_left)
-        end
     end
   end
 
@@ -368,37 +358,4 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
   defp l2_block_number_by_msg_nonce(nonce) do
     Repo.one(from(w in OptimismWithdrawal, select: w.l2_block_number, where: w.msg_nonce == ^nonce))
   end
-
-  defp decode_data("0x", types) do
-    for _ <- types, do: nil
-  end
-
-  defp decode_data("0x" <> encoded_data, types) do
-    encoded_data
-    |> Base.decode16!(case: :mixed)
-    |> TypeDecoder.decode_raw(types)
-  end
-
-  defp decode_data(%Data{} = data, types) do
-    data
-    |> Data.to_string()
-    |> decode_data(types)
-  end
-
-  defp is_address?(value) when is_binary(value) do
-    String.match?(value, ~r/^0x[[:xdigit:]]{40}$/i)
-  end
-
-  defp is_address?(_value) do
-    false
-  end
-
-  defp parse_integer(integer_string) when is_binary(integer_string) do
-    case Integer.parse(integer_string) do
-      {integer, ""} -> integer
-      _ -> nil
-    end
-  end
-
-  defp parse_integer(_integer_string), do: nil
 end
