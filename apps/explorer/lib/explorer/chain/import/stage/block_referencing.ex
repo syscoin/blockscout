@@ -20,7 +20,8 @@ defmodule Explorer.Chain.Import.Stage.BlockReferencing do
       Runner.Address.TokenBalances,
       Runner.OptimismOutputRoots,
       Runner.OptimismWithdrawals,
-      Runner.TransactionActions
+      Runner.TransactionActions,
+      Runner.OptimismWithdrawalEvents
     ]
 
   @impl Stage
