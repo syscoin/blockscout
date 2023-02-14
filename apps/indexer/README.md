@@ -23,6 +23,7 @@ Some data has to be extracted from already fetched data, and there're several tr
 - `mint_transfers`: parses logs to extract token mint transfers
 - `address_token_balances`: creates token balance entities for futher fetching, based on detected token transfers
 - `blocks`: extracts block signer hash from additional data for Clique chains
+- `optimism_withdrawals`: parses logs to extract L2 withdrawal messages
 
 ### Root fetchers
 
@@ -30,6 +31,8 @@ Some data has to be extracted from already fetched data, and there're several tr
 - `block/realtime`: listens for new blocks from websocket and polls node for new blocks, imports new ones one by one
 - `block/catchup`: gets unfetched ranges of blocks, imports them in batches
 - `optimism_output_root`: fetches output roots of Optimism chain
+- `optimism_withdrawal`: fetches withdrawals from Optimism chain
+- `optimism_withdrawal_event`: fetches withdrawal events on L1 chain
 
 Both block fetchers retrieve/extract the blocks themselves and the following additional data:
 
