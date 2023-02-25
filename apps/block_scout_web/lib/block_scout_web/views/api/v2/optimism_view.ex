@@ -3,8 +3,33 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
 
   import Ecto.Query, only: [from: 2]
 
-  alias Explorer.Repo
-  alias Explorer.Chain.{OptimismOutputRoot, OptimismWithdrawalEvent}
+  alias BlockScoutWeb.API.V2.Helper
+  alias Explorer.{Chain, Repo}
+  alias Explorer.Chain.{Block, OptimismOutputRoot, OptimismWithdrawalEvent}
+
+  def render("optimism_txn_batches.json", %{
+        batches: batches,
+        total: total,
+        next_page_params: next_page_params
+      }) do
+    %{
+      items:
+        Enum.map(batches, fn batch ->
+          tx_count =
+            Repo.aggregate(from(b in Block, where: b.number == ^batch.l2_block_number), :count, timeout: :infinity)
+
+          %{
+            "l2_block_number" => batch.l2_block_number,
+            "tx_count" => tx_count,
+            "epoch_number" => batch.epoch_number,
+            "l1_tx_hashes" => batch.l1_tx_hashes,
+            "l1_tx_timestamp" => batch.l1_tx_timestamp
+          }
+        end),
+      total: total,
+      next_page_params: next_page_params
+    }
+  end
 
   def render("output_roots.json", %{
         roots: roots,
@@ -31,7 +56,8 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
   def render("optimism_withdrawals.json", %{
         withdrawals: withdrawals,
         total: total,
-        next_page_params: next_page_params
+        next_page_params: next_page_params,
+        conn: conn
       }) do
     %{
       items:
@@ -44,13 +70,26 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
 
           msg_nonce_version = Bitwise.bsr(Decimal.to_integer(w.msg_nonce), 240)
 
+          from_address =
+            with false <- is_nil(w.from),
+                 {:ok, address} <-
+                   Chain.hash_to_address(
+                     w.from,
+                     [necessity_by_association: %{:names => :optional, :smart_contract => :optional}],
+                     false
+                   ) do
+              address
+            else
+              _ -> nil
+            end
+
           {status, challenge_period_end} = withdrawal_status(w)
 
           %{
             "msg_nonce_raw" => Decimal.to_string(w.msg_nonce, :normal),
             "msg_nonce" => msg_nonce,
             "msg_nonce_version" => msg_nonce_version,
-            "from" => w.from,
+            "from" => Helper.address_with_info(conn, from_address, w.from),
             "l2_tx_hash" => w.l2_tx_hash,
             "l2_timestamp" => w.l2_timestamp,
             "status" => status,
