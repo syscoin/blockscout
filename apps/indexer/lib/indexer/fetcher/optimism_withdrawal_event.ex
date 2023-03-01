@@ -12,9 +12,10 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
 
   import EthereumJSONRPC, only: [json_rpc: 2, quantity_to_integer: 1]
 
+  alias EthereumJSONRPC.Block.ByNumber
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.OptimismWithdrawalEvent
-  alias Indexer.BoundQueue
+  alias Indexer.{BoundQueue, Helpers}
   alias Indexer.Fetcher.Optimism
 
   @block_check_interval_range_size 100
@@ -47,19 +48,19 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
     env = Application.get_all_env(:indexer)[__MODULE__]
 
     with {:start_block_l1_undefined, false} <- {:start_block_l1_undefined, is_nil(env[:start_block_l1])},
-         optimism_rpc_l1 <- Application.get_env(:indexer, :optimism_rpc_l1),
-         {:rpc_l1_undefined, false} <- {:rpc_l1_undefined, is_nil(optimism_rpc_l1)},
-         optimism_portal_l1 = Application.get_env(:indexer, :optimism_portal_l1),
-         {:optimism_portal_valid, true} <- {:optimism_portal_valid, Optimism.is_address?(optimism_portal_l1)},
+         optimism_l1_rpc <- Application.get_env(:indexer, :optimism_l1_rpc),
+         {:rpc_l1_undefined, false} <- {:rpc_l1_undefined, is_nil(optimism_l1_rpc)},
+         optimism_l1_portal = Application.get_env(:indexer, :optimism_l1_portal),
+         {:optimism_portal_valid, true} <- {:optimism_portal_valid, Helpers.is_address_correct?(optimism_l1_portal)},
          start_block_l1 <- Optimism.parse_integer(env[:start_block_l1]),
          false <- is_nil(start_block_l1),
          true <- start_block_l1 > 0,
-         {last_l1_block_number, last_l1_tx_hash} <- get_last_l1_item(),
+         {last_l1_block_number, last_l1_transaction_hash} <- get_last_l1_item(),
          {:start_block_l1_valid, true} <-
            {:start_block_l1_valid, start_block_l1 <= last_l1_block_number || last_l1_block_number == 0},
-         json_rpc_named_arguments <- json_rpc_named_arguments(optimism_rpc_l1),
-         {:ok, last_l1_tx} <- Optimism.get_transaction_by_hash(last_l1_tx_hash, json_rpc_named_arguments),
-         {:l1_tx_not_found, false} <- {:l1_tx_not_found, !is_nil(last_l1_tx_hash) && is_nil(last_l1_tx)},
+         json_rpc_named_arguments <- json_rpc_named_arguments(optimism_l1_rpc),
+         {:ok, last_l1_tx} <- Optimism.get_transaction_by_hash(last_l1_transaction_hash, json_rpc_named_arguments),
+         {:l1_tx_not_found, false} <- {:l1_tx_not_found, !is_nil(last_l1_transaction_hash) && is_nil(last_l1_tx)},
          {:ok, last_safe_block} <- Optimism.get_block_number_by_tag("safe", json_rpc_named_arguments),
          first_block <- max(last_safe_block - @block_check_interval_range_size, 1),
          {:ok, first_block_timestamp} <- Optimism.get_block_timestamp_by_number(first_block, json_rpc_named_arguments),
@@ -79,7 +80,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
 
       {:ok,
        %{
-         optimism_portal: optimism_portal_l1,
+         optimism_portal: optimism_l1_portal,
          block_check_interval: block_check_interval,
          start_block: start_block,
          end_block: last_safe_block,
@@ -251,7 +252,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
         withdrawal_hash: Enum.at(event["topics"], 1),
         l1_event_type: l1_event_type,
         l1_timestamp: Map.get(timestamps, l1_block_number),
-        l1_tx_hash: event["transactionHash"],
+        l1_transaction_hash: event["transactionHash"],
         l1_block_number: l1_block_number
       }
     end)
@@ -316,7 +317,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
   defp get_last_l1_item do
     query =
       from(we in OptimismWithdrawalEvent,
-        select: {we.l1_block_number, we.l1_tx_hash},
+        select: {we.l1_block_number, we.l1_transaction_hash},
         order_by: [desc: we.l1_timestamp],
         limit: 1
       )
@@ -335,7 +336,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
       |> Enum.map(fn {block_number, _} -> block_number end)
       |> Enum.with_index()
       |> Enum.map(fn {block_number, id} ->
-        %{id: id, method: "eth_getBlockByNumber", params: [block_number, false], jsonrpc: "2.0"}
+        ByNumber.request(%{number: block_number, id: id}, false, false)
       end)
 
     case json_rpc(request, json_rpc_named_arguments) do
@@ -395,12 +396,12 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
     end
   end
 
-  defp json_rpc_named_arguments(optimism_rpc_l1) do
+  defp json_rpc_named_arguments(optimism_l1_rpc) do
     [
       transport: EthereumJSONRPC.HTTP,
       transport_options: [
         http: EthereumJSONRPC.HTTP.HTTPoison,
-        url: optimism_rpc_l1,
+        url: optimism_l1_rpc,
         http_options: [
           recv_timeout: :timer.minutes(10),
           timeout: :timer.minutes(10),

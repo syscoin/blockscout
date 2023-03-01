@@ -15,7 +15,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
   alias EthereumJSONRPC.Blocks
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.{Block, OptimismTxnBatch}
-  alias Indexer.BoundQueue
+  alias Indexer.{BoundQueue, Helpers}
   alias Indexer.Fetcher.Optimism
 
   @block_check_interval_range_size 100
@@ -45,18 +45,18 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     env = Application.get_all_env(:indexer)[__MODULE__]
 
     with {:start_block_l1_undefined, false} <- {:start_block_l1_undefined, is_nil(env[:start_block_l1])},
-         optimism_rpc_l1 = Application.get_env(:indexer, :optimism_rpc_l1),
-         {:rpc_l1_undefined, false} <- {:rpc_l1_undefined, is_nil(optimism_rpc_l1)},
-         {:batch_inbox_valid, true} <- {:batch_inbox_valid, Optimism.is_address?(env[:batch_inbox])},
-         {:batch_submitter_valid, true} <- {:batch_submitter_valid, Optimism.is_address?(env[:batch_submitter])},
+         optimism_l1_rpc = Application.get_env(:indexer, :optimism_l1_rpc),
+         {:rpc_l1_undefined, false} <- {:rpc_l1_undefined, is_nil(optimism_l1_rpc)},
+         {:batch_inbox_valid, true} <- {:batch_inbox_valid, Helpers.is_address_correct?(env[:batch_inbox])},
+         {:batch_submitter_valid, true} <- {:batch_submitter_valid, Helpers.is_address_correct?(env[:batch_submitter])},
          start_block_l1 = Optimism.parse_integer(env[:start_block_l1]),
          false <- is_nil(start_block_l1),
          true <- start_block_l1 > 0,
-         json_rpc_named_arguments = json_rpc_named_arguments(optimism_rpc_l1),
-         {last_l1_block_number, last_l1_tx_hash, last_l1_tx} = get_last_l1_item(json_rpc_named_arguments),
+         json_rpc_named_arguments = json_rpc_named_arguments(optimism_l1_rpc),
+         {last_l1_block_number, last_l1_transaction_hash, last_l1_tx} = get_last_l1_item(json_rpc_named_arguments),
          {:start_block_l1_valid, true} <-
            {:start_block_l1_valid, start_block_l1 <= last_l1_block_number || last_l1_block_number == 0},
-         {:l1_tx_not_found, false} <- {:l1_tx_not_found, !is_nil(last_l1_tx_hash) && is_nil(last_l1_tx)},
+         {:l1_tx_not_found, false} <- {:l1_tx_not_found, !is_nil(last_l1_transaction_hash) && is_nil(last_l1_tx)},
          {:ok, last_safe_block} <- Optimism.get_block_number_by_tag("safe", json_rpc_named_arguments),
          first_block = max(last_safe_block - @block_check_interval_range_size, 1),
          {:ok, first_block_timestamp} <- Optimism.get_block_timestamp_by_number(first_block, json_rpc_named_arguments),
@@ -240,7 +240,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
   end
 
   defp empty_incomplete_frame_sequence(last_frame_number \\ -1) do
-    %{bytes: <<>>, last_frame_number: last_frame_number, l1_tx_hashes: []}
+    %{bytes: <<>>, last_frame_number: last_frame_number, l1_transaction_hashes: []}
   end
 
   defp get_block_numbers_by_hashes(hashes, json_rpc_named_arguments_l2) do
@@ -292,29 +292,29 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
   end
 
   defp get_last_l1_item(json_rpc_named_arguments) do
-    l1_tx_hashes =
+    l1_transaction_hashes =
       Repo.one(
         from(
           tb in OptimismTxnBatch,
-          select: tb.l1_tx_hashes,
+          select: tb.l1_transaction_hashes,
           order_by: [desc: tb.l2_block_number],
           limit: 1
         )
       )
 
-    last_l1_tx_hash =
-      if is_nil(l1_tx_hashes) do
+    last_l1_transaction_hash =
+      if is_nil(l1_transaction_hashes) do
         nil
       else
-        List.last(l1_tx_hashes)
+        List.last(l1_transaction_hashes)
       end
 
-    if is_nil(last_l1_tx_hash) do
+    if is_nil(last_l1_transaction_hash) do
       {0, nil, nil}
     else
-      {:ok, last_l1_tx} = Optimism.get_transaction_by_hash(last_l1_tx_hash, json_rpc_named_arguments)
+      {:ok, last_l1_tx} = Optimism.get_transaction_by_hash(last_l1_transaction_hash, json_rpc_named_arguments)
       last_l1_block_number = quantity_to_integer(Map.get(last_l1_tx || %{}, "blockNumber", 0))
-      {last_l1_block_number, last_l1_tx_hash, last_l1_tx}
+      {last_l1_block_number, last_l1_transaction_hash, last_l1_tx}
     end
   end
 
@@ -405,17 +405,17 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
       else
         frame_sequence = incomplete_frame_sequence_acc.bytes <> frame.data
         # credo:disable-for-next-line
-        l1_tx_hashes = incomplete_frame_sequence_acc.l1_tx_hashes ++ [t.hash]
+        l1_transaction_hashes = incomplete_frame_sequence_acc.l1_transaction_hashes ++ [t.hash]
         last_frame_number = incomplete_frame_sequence_acc.last_frame_number
 
         with {:frame_number_valid, true} <- {:frame_number_valid, frame.number == last_frame_number + 1},
              {:frame_is_last, true} <- {:frame_is_last, frame.is_last},
-             l1_tx_timestamp = get_block_timestamp_by_number(t.block_number, blocks_params),
+             l1_transaction_timestamp = get_block_timestamp_by_number(t.block_number, blocks_params),
              batches_parsed =
                parse_frame_sequence(
                  frame_sequence,
-                 l1_tx_hashes,
-                 l1_tx_timestamp,
+                 l1_transaction_hashes,
+                 l1_transaction_timestamp,
                  json_rpc_named_arguments_l2,
                  after_reorg
                ),
@@ -434,7 +434,8 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
           {:frame_is_last, false} ->
             {:cont,
-             {:ok, batches, %{bytes: frame_sequence, last_frame_number: frame.number, l1_tx_hashes: l1_tx_hashes}}}
+             {:ok, batches,
+              %{bytes: frame_sequence, last_frame_number: frame.number, l1_transaction_hashes: l1_transaction_hashes}}}
         end
       end
     end)
@@ -454,12 +455,12 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     %{number: frame_number, data: frame_data, is_last: is_last}
   end
 
-  defp json_rpc_named_arguments(optimism_rpc_l1) do
+  defp json_rpc_named_arguments(optimism_l1_rpc) do
     [
       transport: EthereumJSONRPC.HTTP,
       transport_options: [
         http: EthereumJSONRPC.HTTP.HTTPoison,
-        url: optimism_rpc_l1,
+        url: optimism_l1_rpc,
         http_options: [
           recv_timeout: :timer.minutes(10),
           timeout: :timer.minutes(10),
@@ -505,7 +506,13 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     end
   end
 
-  defp parse_frame_sequence(bytes, l1_tx_hashes, l1_tx_timestamp, json_rpc_named_arguments_l2, after_reorg) do
+  defp parse_frame_sequence(
+         bytes,
+         l1_transaction_hashes,
+         l1_transaction_timestamp,
+         json_rpc_named_arguments_l2,
+         after_reorg
+       ) do
     uncompressed_bytes = zlib_decompress(bytes)
 
     batches =
@@ -517,8 +524,8 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
           batch = %{
             parent_hash: Enum.at(batch, 0),
             epoch_number: :binary.decode_unsigned(Enum.at(batch, 1)),
-            l1_tx_hashes: l1_tx_hashes,
-            l1_tx_timestamp: l1_tx_timestamp
+            l1_transaction_hashes: l1_transaction_hashes,
+            l1_transaction_timestamp: l1_transaction_timestamp
           }
 
           if byte_size(new_remainder) > 0 do
@@ -585,7 +592,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     batches
     |> Enum.sort(fn b1, b2 ->
       b1.l2_block_number < b2.l2_block_number or
-        (b1.l2_block_number == b2.l2_block_number and b1.l1_tx_timestamp < b2.l1_tx_timestamp)
+        (b1.l2_block_number == b2.l2_block_number and b1.l1_transaction_timestamp < b2.l1_transaction_timestamp)
     end)
     |> Enum.reduce(%{}, fn b, acc ->
       Map.put(acc, b.l2_block_number, b)
@@ -670,7 +677,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
                    %{
                      bytes: frame.data <> acc.bytes,
                      last_frame_number: frame.number,
-                     l1_tx_hashes: [t.hash | acc.l1_tx_hashes]
+                     l1_transaction_hashes: [t.hash | acc.l1_transaction_hashes]
                    }}
                 else
                   {:halt, :error}

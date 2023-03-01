@@ -5,7 +5,7 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
 
   alias BlockScoutWeb.API.V2.Helper
   alias Explorer.{Chain, Repo}
-  alias Explorer.Chain.{Block, OptimismOutputRoot, OptimismWithdrawalEvent}
+  alias Explorer.Chain.{OptimismOutputRoot, OptimismWithdrawalEvent, Transaction}
 
   def render("optimism_txn_batches.json", %{
         batches: batches,
@@ -16,14 +16,16 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
       items:
         Enum.map(batches, fn batch ->
           tx_count =
-            Repo.aggregate(from(b in Block, where: b.number == ^batch.l2_block_number), :count, timeout: :infinity)
+            Repo.aggregate(from(t in Transaction, where: t.block_number == ^batch.l2_block_number), :count,
+              timeout: :infinity
+            )
 
           %{
             "l2_block_number" => batch.l2_block_number,
             "tx_count" => tx_count,
             "epoch_number" => batch.epoch_number,
-            "l1_tx_hashes" => batch.l1_tx_hashes,
-            "l1_tx_timestamp" => batch.l1_tx_timestamp
+            "l1_tx_hashes" => batch.l1_transaction_hashes,
+            "l1_tx_timestamp" => batch.l1_transaction_timestamp
           }
         end),
       total: total,
@@ -42,7 +44,7 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
           %{
             "l2_output_index" => r.l2_output_index,
             "l2_block_number" => r.l2_block_number,
-            "l1_tx_hash" => r.l1_tx_hash,
+            "l1_tx_hash" => r.l1_transaction_hash,
             "l1_timestamp" => r.l1_timestamp,
             "l1_block_number" => r.l1_block_number,
             "output_root" => r.output_root
@@ -90,10 +92,10 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
             "msg_nonce" => msg_nonce,
             "msg_nonce_version" => msg_nonce_version,
             "from" => Helper.address_with_info(conn, from_address, w.from),
-            "l2_tx_hash" => w.l2_tx_hash,
+            "l2_tx_hash" => w.l2_transaction_hash,
             "l2_timestamp" => w.l2_timestamp,
             "status" => status,
-            "l1_tx_hash" => w.l1_tx_hash,
+            "l1_tx_hash" => w.l1_transaction_hash,
             "challenge_period_end" => challenge_period_end
           }
         end),
@@ -103,7 +105,7 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
   end
 
   defp withdrawal_status(w) do
-    if is_nil(w.l1_tx_hash) do
+    if is_nil(w.l1_transaction_hash) do
       l1_timestamp =
         Repo.one(
           from(
