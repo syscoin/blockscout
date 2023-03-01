@@ -3,18 +3,30 @@
 Runs Blockscout locally in Docker containers with [docker-compose](https://github.com/docker/compose).
 
 ## Prerequisites
+
 - Docker v20.10+
 - Docker-compose 2.x.x+
 - Running Ethereum JSON RPC client
 
 ## Building Docker containers from source
-```
+
+```bash
 docker-compose up --build
 ```
 
-This command uses by-default `docker-compose.yml`, which build the explorer into Docker image and runs 2 Docker containers:
-- one for the database. Postgres 13.x, which will be available at port 7432 on localhost
-- and the BlockScout explorer at http://localhost:4000
+This command uses by-default `docker-compose.yml`, which builds the explorer into the Docker image and runs 3 Docker containers:
+
+- Postgres 14.x database, which will be available at port 7432 on localhost.
+- [Smart-contract-verifier](https://github.com/blockscout/blockscout-rs/) service, which will be available at port 8043 on localhost.
+- Blockscout explorer at http://localhost:4000.
+
+Note for Linux users: Linux users need to run the local node on http://0.0.0.0/ rather than http://127.0.0.1/
+
+## Building Docker containers from source with native smart contract verification (deprecated)
+
+```bash
+docker-compose -f docker-compose-no-rust-verification.yml up --build
+```
 
 ## Configs for different Ethereum clients
 
