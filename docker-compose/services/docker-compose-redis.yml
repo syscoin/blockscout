@@ -7,5 +7,3 @@ services:
       - 6379:6379
     container_name: redis_db
     command: redis-server
-    volumes:
-      - ./redis-data:/data
