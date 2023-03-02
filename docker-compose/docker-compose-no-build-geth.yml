@@ -5,11 +5,20 @@ services:
     extends:
       file: ./services/docker-compose-redis.yml
       service: redis_db
+    volumes:
+      - "${HOME}/blockscout-data/redis-data:/data"
 
   db:
     extends:
       file: ./services/docker-compose-db.yml
       service: db
+    shm_size: "256MB"
+    command: >
+      postgres -c 'max_connections=250'
+      && postgres -c 'shared_buffers=256MB'
+      && postgres -c 'work_mem=128MB'
+    volumes:
+      - "${HOME}/blockscout-data/postgres-data:/var/lib/postgresql/data"
 
   blockscout:
     platform: linux/x86_64
@@ -36,11 +45,10 @@ services:
         DATABASE_URL: postgresql://postgres:@host.docker.internal:7432/blockscout?ssl=false
         ECTO_USE_SSL: 'false'
         SECRET_KEY_BASE: '56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN'
-
     ports:
       - 4000:4000
     volumes:
-      - ./logs/:/app/logs/
+      - "${HOME}/blockscout-data/logs/:/app/logs"
 
   smart-contract-verifier:
     extends:
