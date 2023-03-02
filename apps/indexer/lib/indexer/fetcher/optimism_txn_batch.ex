@@ -12,6 +12,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
   import EthereumJSONRPC, only: [fetch_blocks_by_range: 2, json_rpc: 2, quantity_to_integer: 1]
 
+  alias EthereumJSONRPC.Block.ByHash
   alias EthereumJSONRPC.Blocks
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.{Block, OptimismTxnBatch}
@@ -52,7 +53,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
          start_block_l1 = Optimism.parse_integer(env[:start_block_l1]),
          false <- is_nil(start_block_l1),
          true <- start_block_l1 > 0,
-         json_rpc_named_arguments = json_rpc_named_arguments(optimism_l1_rpc),
+         json_rpc_named_arguments = Optimism.json_rpc_named_arguments(optimism_l1_rpc),
          {last_l1_block_number, last_l1_transaction_hash, last_l1_tx} = get_last_l1_item(json_rpc_named_arguments),
          {:start_block_l1_valid, true} <-
            {:start_block_l1_valid, start_block_l1 <= last_l1_block_number || last_l1_block_number == 0},
@@ -156,7 +157,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
         new_incomplete_frame_sequence =
           if chunk_end >= chunk_start do
-            log_blocks_chunk_handling(chunk_start, chunk_end, start_block, end_block, nil)
+            Optimism.log_blocks_chunk_handling(chunk_start, chunk_end, start_block, end_block, nil, "L1")
 
             {:ok, batches, new_incomplete_frame_sequence} =
               get_txn_batches(
@@ -178,7 +179,14 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
                 timeout: :infinity
               })
 
-            log_blocks_chunk_handling(chunk_start, chunk_end, start_block, end_block, Enum.count(batches))
+            Optimism.log_blocks_chunk_handling(
+              chunk_start,
+              chunk_end,
+              start_block,
+              end_block,
+              "#{Enum.count(batches)} batch(es)",
+              "L1"
+            )
 
             new_incomplete_frame_sequence
           else
@@ -253,7 +261,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
     number_by_hash =
       query
-      |> Repo.all()
+      |> Repo.all(timeout: :infinity)
       |> Enum.reduce(%{}, fn {hash, number}, acc ->
         Map.put(acc, hash.bytes, number)
       end)
@@ -263,12 +271,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
       |> Enum.filter(fn hash -> is_nil(Map.get(number_by_hash, hash)) end)
       |> Enum.with_index()
       |> Enum.map(fn {hash, id} ->
-        %{
-          id: id,
-          method: "eth_getBlockByHash",
-          params: ["0x" <> Base.encode16(hash, case: :lower), false],
-          jsonrpc: "2.0"
-        }
+        ByHash.request(%{hash: "0x" <> Base.encode16(hash, case: :lower), id: id}, false)
       end)
       |> json_rpc(json_rpc_named_arguments_l2)
 
@@ -453,57 +456,6 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     is_last = :binary.decode_unsigned(binary_part(input_binary, 1 + 16 + 2 + 4 + frame_data_length, 1)) > 0
 
     %{number: frame_number, data: frame_data, is_last: is_last}
-  end
-
-  defp json_rpc_named_arguments(optimism_l1_rpc) do
-    [
-      transport: EthereumJSONRPC.HTTP,
-      transport_options: [
-        http: EthereumJSONRPC.HTTP.HTTPoison,
-        url: optimism_l1_rpc,
-        http_options: [
-          recv_timeout: :timer.minutes(10),
-          timeout: :timer.minutes(10),
-          hackney: [pool: :ethereum_jsonrpc]
-        ]
-      ]
-    ]
-  end
-
-  defp log_blocks_chunk_handling(chunk_start, chunk_end, start_block, end_block, batches_count) do
-    {type, found} =
-      if is_nil(batches_count) do
-        {"Start", ""}
-      else
-        {"Finish", " Found #{batches_count} batch(es)."}
-      end
-
-    target_range =
-      if chunk_start != start_block or chunk_end != end_block do
-        progress =
-          if is_nil(batches_count) do
-            ""
-          else
-            percentage =
-              (chunk_end - start_block + 1)
-              |> Decimal.div(end_block - start_block + 1)
-              |> Decimal.mult(100)
-              |> Decimal.round(2)
-              |> Decimal.to_string()
-
-            " Progress: #{percentage}%"
-          end
-
-        " Target range: #{start_block}..#{end_block}.#{progress}"
-      else
-        ""
-      end
-
-    if chunk_start == chunk_end do
-      Logger.info("#{type} handling L1 block ##{chunk_start}.#{found}#{target_range}")
-    else
-      Logger.info("#{type} handling L1 block range #{chunk_start}..#{chunk_end}.#{found}#{target_range}")
-    end
   end
 
   defp parse_frame_sequence(
