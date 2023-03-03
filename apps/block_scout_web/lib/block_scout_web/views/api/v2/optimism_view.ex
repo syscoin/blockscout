@@ -25,7 +25,7 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
             "tx_count" => tx_count,
             "epoch_number" => batch.epoch_number,
             "l1_tx_hashes" => batch.l1_transaction_hashes,
-            "l1_tx_timestamp" => batch.l1_transaction_timestamp
+            "l1_timestamp" => batch.l1_timestamp
           }
         end),
       total: total,
@@ -111,7 +111,7 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
           from(
             we in OptimismWithdrawalEvent,
             select: we.l1_timestamp,
-            where: we.withdrawal_hash == ^w.withdrawal_hash and we.l1_event_type == :WithdrawalProven
+            where: we.withdrawal_hash == ^w.hash and we.l1_event_type == :WithdrawalProven
           )
         )
 

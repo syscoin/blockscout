@@ -11,6 +11,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
   import Ecto.Query
 
   import EthereumJSONRPC, only: [quantity_to_integer: 1]
+  import Explorer.Helpers, only: [decode_data: 2]
 
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.{Log, OptimismWithdrawal}
@@ -130,12 +131,11 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
   end
 
   def event_to_withdrawal(second_topic, data, l2_transaction_hash, l2_block_number) do
-    [_value, _gas_limit, _data, withdrawal_hash] =
-      Optimism.decode_data(data, [{:uint, 256}, {:uint, 256}, :bytes, {:bytes, 32}])
+    [_value, _gas_limit, _data, hash] = decode_data(data, [{:uint, 256}, {:uint, 256}, :bytes, {:bytes, 32}])
 
     %{
       msg_nonce: Decimal.new(quantity_to_integer(second_topic)),
-      withdrawal_hash: withdrawal_hash,
+      hash: hash,
       l2_transaction_hash: l2_transaction_hash,
       l2_block_number: quantity_to_integer(l2_block_number)
     }
