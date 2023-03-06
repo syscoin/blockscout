@@ -16,10 +16,11 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
   alias EthereumJSONRPC.Blocks
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.{Block, OptimismTxnBatch}
-  alias Indexer.{BoundQueue, Helpers}
   alias Indexer.Fetcher.Optimism
+  alias Indexer.Helpers
 
   @block_check_interval_range_size 100
+  @fetcher_name :optimism_txn_batch
   @reorg_rewind_limit 10
 
   def child_spec(start_link_arguments) do
@@ -33,13 +34,15 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     Supervisor.child_spec(spec, [])
   end
 
+  def fetcher_name, do: @fetcher_name
+
   def start_link(args, gen_server_options \\ []) do
     GenServer.start_link(__MODULE__, args, Keyword.put_new(gen_server_options, :name, __MODULE__))
   end
 
   @impl GenServer
   def init(args) do
-    Logger.metadata(fetcher: :optimism_txn_batch)
+    Logger.metadata(fetcher: @fetcher_name)
 
     json_rpc_named_arguments_l2 = args[:json_rpc_named_arguments]
     env = Application.get_all_env(:indexer)[__MODULE__]
@@ -73,7 +76,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
       reorg_monitor_task =
         Task.Supervisor.async_nolink(Indexer.Fetcher.OptimismTxnBatch.TaskSupervisor, fn ->
-          reorg_monitor(block_check_interval, json_rpc_named_arguments)
+          Optimism.reorg_monitor(@fetcher_name, block_check_interval, json_rpc_named_arguments)
         end)
 
       {:ok,
@@ -199,7 +202,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
             incomplete_frame_sequence_acc
           end
 
-        reorg_block = reorg_block_pop()
+        reorg_block = Optimism.reorg_block_pop(@fetcher_name)
 
         if !is_nil(reorg_block) && reorg_block > 0 do
           {:halt, {if(reorg_block <= chunk_end, do: reorg_block - 1, else: chunk_end), nil}}
@@ -246,7 +249,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
       task =
         Task.Supervisor.async_nolink(Indexer.Fetcher.OptimismTxnBatch.TaskSupervisor, fn ->
-          reorg_monitor(block_check_interval, json_rpc_named_arguments)
+          Optimism.reorg_monitor(@fetcher_name, block_check_interval, json_rpc_named_arguments)
         end)
 
       {:noreply, %{state | reorg_monitor_task: task}}
@@ -453,13 +456,44 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
   defp input_to_frame("0x" <> input) do
     input_binary = Base.decode16!(input, case: :mixed)
 
-    # the first byte must be zero (so called Derivation Version)
-    [0] = :binary.bin_to_list(binary_part(input_binary, 0, 1))
+    # the structure of the input is as follows:
+    #
+    # input = derivation_version ++ channel_id ++ frame_number ++ frame_data_length ++ frame_data ++ is_last
+    #
+    # derivation_version = uint8
+    # channel_id         = bytes16
+    # frame_number       = uint16
+    # frame_data_length  = uint32
+    # frame_data         = bytes
+    # is_last            = bool (uint8)
 
-    frame_number = :binary.decode_unsigned(binary_part(input_binary, 1 + 16, 2))
-    frame_data_length = :binary.decode_unsigned(binary_part(input_binary, 1 + 16 + 2, 4))
-    frame_data = binary_part(input_binary, 1 + 16 + 2 + 4, frame_data_length)
-    is_last = :binary.decode_unsigned(binary_part(input_binary, 1 + 16 + 2 + 4 + frame_data_length, 1)) > 0
+    # the first byte must be zero (so called Derivation Version)
+    derivation_version_length = 1
+    [0] = :binary.bin_to_list(binary_part(input_binary, 0, derivation_version_length))
+
+    # channel id is a random value (we don't use it)
+    channel_id_length = 16
+
+    # frame number consists of 2 bytes
+    frame_number_offset = derivation_version_length + channel_id_length
+    frame_number_size = 2
+    frame_number = :binary.decode_unsigned(binary_part(input_binary, frame_number_offset, frame_number_size))
+
+    # frame data length consists of 4 bytes
+    frame_data_length_offset = frame_number_offset + frame_number_size
+    frame_data_length_size = 4
+
+    frame_data_length =
+      :binary.decode_unsigned(binary_part(input_binary, frame_data_length_offset, frame_data_length_size))
+
+    # frame data is a byte array of frame_data_length size
+    frame_data_offset = frame_data_length_offset + frame_data_length_size
+    frame_data = binary_part(input_binary, frame_data_offset, frame_data_length)
+
+    # is_last is 1-byte item
+    is_last_offset = frame_data_offset + frame_data_length
+    is_last_size = 1
+    is_last = :binary.decode_unsigned(binary_part(input_binary, is_last_offset, is_last_size)) > 0
 
     %{number: frame_number, data: frame_data, is_last: is_last}
   end
@@ -556,62 +590,6 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
       Map.put(acc, b.l2_block_number, b)
     end)
     |> Map.values()
-  end
-
-  defp reorg_monitor(block_check_interval, json_rpc_named_arguments) do
-    Logger.metadata(fetcher: :optimism_txn_batch)
-
-    # infinite loop
-    # credo:disable-for-next-line
-    Enum.reduce_while(Stream.iterate(0, &(&1 + 1)), 0, fn _i, prev_latest ->
-      {:ok, latest} = Optimism.get_block_number_by_tag("latest", json_rpc_named_arguments, 100_000_000)
-
-      if latest < prev_latest do
-        Logger.warning("Reorg detected: previous latest block ##{prev_latest}, current latest block ##{latest}.")
-        reorg_block_push(latest)
-      end
-
-      :timer.sleep(block_check_interval)
-
-      {:cont, latest}
-    end)
-
-    :ok
-  end
-
-  defp reorg_block_pop do
-    case BoundQueue.pop_front(reorg_queue_get()) do
-      {:ok, {block_number, updated_queue}} ->
-        :ets.insert(:op_txn_batches_reorgs, {:queue, updated_queue})
-        block_number
-
-      {:error, :empty} ->
-        nil
-    end
-  end
-
-  defp reorg_block_push(block_number) do
-    {:ok, updated_queue} = BoundQueue.push_back(reorg_queue_get(), block_number)
-    :ets.insert(:op_txn_batches_reorgs, {:queue, updated_queue})
-  end
-
-  defp reorg_queue_get do
-    if :ets.whereis(:op_txn_batches_reorgs) == :undefined do
-      :ets.new(:op_txn_batches_reorgs, [
-        :set,
-        :named_table,
-        :public,
-        read_concurrency: true,
-        write_concurrency: true
-      ])
-    end
-
-    with info when info != :undefined <- :ets.info(:op_txn_batches_reorgs),
-         [{_, value}] <- :ets.lookup(:op_txn_batches_reorgs, :queue) do
-      value
-    else
-      _ -> %BoundQueue{}
-    end
   end
 
   defp rewind_after_reorg(block_number, frame_number, batch_submitter, batch_inbox, json_rpc_named_arguments) do
