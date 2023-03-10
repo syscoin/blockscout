@@ -53,6 +53,7 @@ defmodule Explorer.Chain do
     Import,
     InternalTransaction,
     Log,
+    OptimismFrameSequence,
     OptimismOutputRoot,
     OptimismTxnBatch,
     OptimismWithdrawal,
@@ -82,6 +83,7 @@ defmodule Explorer.Chain do
   }
 
   alias Explorer.Chain.Cache.Block, as: BlockCache
+  alias Explorer.Chain.Cache.Helper, as: CacheHelper
   alias Explorer.Chain.Fetcher.CheckBytecodeMatchingOnDemand
   alias Explorer.Chain.Import.Runner
   alias Explorer.Chain.InternalTransaction.{CallType, Type}
@@ -195,9 +197,9 @@ defmodule Explorer.Chain do
     cached_value = AddressesCounter.fetch()
 
     if is_nil(cached_value) || cached_value == 0 do
-      %Postgrex.Result{rows: [[count]]} = Repo.query!("SELECT reltuples FROM pg_class WHERE relname = 'addresses';")
+      count = CacheHelper.estimated_count_from("addresses")
 
-      max(count, 0)
+      if is_nil(count), do: 0, else: count
     else
       cached_value
     end
@@ -2443,8 +2445,15 @@ defmodule Explorer.Chain do
 
     base_query =
       from(tb in OptimismTxnBatch,
+        inner_join: fs in OptimismFrameSequence,
+        on: fs.id == tb.frame_sequence_id,
         order_by: [desc: tb.l2_block_number],
-        select: tb
+        select: %{
+          l2_block_number: tb.l2_block_number,
+          epoch_number: tb.epoch_number,
+          l1_transaction_hashes: fs.l1_transaction_hashes,
+          l1_timestamp: fs.l1_timestamp
+        }
       )
 
     base_query
@@ -2456,11 +2465,7 @@ defmodule Explorer.Chain do
   def get_table_rows_total_count(module) do
     table_name = module.__schema__(:source)
 
-    %Postgrex.Result{rows: [[count]]} =
-      SQL.query!(
-        Repo,
-        "SELECT (CASE WHEN c.reltuples < 0 THEN NULL WHEN c.relpages = 0 THEN float8 '0' ELSE c.reltuples / c.relpages END * (pg_catalog.pg_relation_size(c.oid) / pg_catalog.current_setting('block_size')::int))::bigint FROM pg_catalog.pg_class c WHERE c.oid = '#{table_name}'::regclass"
-      )
+    count = CacheHelper.estimated_count_from(table_name)
 
     if is_nil(count) do
       Repo.aggregate(module, :count, timeout: :infinity)
