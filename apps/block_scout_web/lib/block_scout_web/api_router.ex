@@ -20,6 +20,7 @@ defmodule BlockScoutWeb.ApiRouter do
 
   pipeline :api do
     plug(:accepts, ["json"])
+    plug(BlockScoutWeb.Plug.Logger, application: :api)
   end
 
   pipeline :account_api do
@@ -29,16 +30,21 @@ defmodule BlockScoutWeb.ApiRouter do
   end
 
   pipeline :api_v2 do
+    plug(:accepts, ["json"])
     plug(CheckApiV2)
     plug(:fetch_session)
     plug(:protect_from_forgery)
+    plug(BlockScoutWeb.Plug.Logger, application: :api_v2)
   end
 
-  alias BlockScoutWeb.Account.Api.V1.{TagsController, UserController}
+  alias BlockScoutWeb.Account.Api.V1.{AuthenticateController, TagsController, UserController}
 
   scope "/account/v1", as: :account_v1 do
     pipe_through(:api)
     pipe_through(:account_api)
+
+    get("/authenticate", AuthenticateController, :authenticate_get)
+    post("/authenticate", AuthenticateController, :authenticate_post)
 
     get("/get_csrf", UserController, :get_csrf)
 
@@ -93,7 +99,6 @@ defmodule BlockScoutWeb.ApiRouter do
   end
 
   scope "/v2", as: :api_v2 do
-    pipe_through(:api)
     pipe_through(:api_v2)
 
     alias BlockScoutWeb.API.V2
@@ -167,9 +172,13 @@ defmodule BlockScoutWeb.ApiRouter do
 
     scope "/optimism" do
       get("/txn-batches", V2.OptimismController, :txn_batches)
+      get("/txn-batches/count", V2.OptimismController, :txn_batches_count)
       get("/output-roots", V2.OptimismController, :output_roots)
+      get("/output-roots/count", V2.OptimismController, :output_roots_count)
       get("/deposits", V2.OptimismController, :deposits)
+      get("/deposits/count", V2.OptimismController, :deposits_count)
       get("/withdrawals", V2.OptimismController, :withdrawals)
+      get("/withdrawals/count", V2.OptimismController, :withdrawals_count)
     end
   end
 

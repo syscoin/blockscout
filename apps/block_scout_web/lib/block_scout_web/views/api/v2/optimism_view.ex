@@ -5,37 +5,57 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
 
   alias BlockScoutWeb.API.V2.Helper
   alias Explorer.{Chain, Repo}
-  alias Explorer.Chain.{OptimismOutputRoot, OptimismWithdrawalEvent, Transaction}
+  alias Explorer.Chain.{Block, OptimismOutputRoot, OptimismWithdrawalEvent, Transaction}
+
+  @challenge_period 604_800
 
   def render("optimism_txn_batches.json", %{
         batches: batches,
-        total: total,
         next_page_params: next_page_params
       }) do
-    %{
-      items:
-        Enum.map(batches, fn batch ->
-          tx_count =
-            Repo.aggregate(from(t in Transaction, where: t.block_number == ^batch.l2_block_number), :count,
-              timeout: :infinity
-            )
+    tx_counts =
+      batches
+      |> Enum.map(fn batch ->
+        Task.async(fn ->
+          Repo.replica().aggregate(
+            from(
+              t in Transaction,
+              inner_join: b in Block,
+              on: b.hash == t.block_hash and b.consensus == true,
+              where: t.block_number == ^batch.l2_block_number
+            ),
+            :count,
+            timeout: :infinity
+          )
+        end)
+      end)
+      |> Task.yield_many(:infinity)
+      |> Enum.map(fn {_task, res} ->
+        {:ok, count} = res
+        count
+      end)
 
-          %{
-            "l2_block_number" => batch.l2_block_number,
-            "tx_count" => tx_count,
-            "epoch_number" => batch.epoch_number,
-            "l1_tx_hashes" => batch.l1_transaction_hashes,
-            "l1_timestamp" => batch.l1_timestamp
-          }
-        end),
-      total: total,
+    items =
+      batches
+      |> Enum.with_index()
+      |> Enum.map(fn {batch, i} ->
+        %{
+          "l2_block_number" => batch.l2_block_number,
+          "tx_count" => Enum.at(tx_counts, i),
+          "epoch_number" => batch.epoch_number,
+          "l1_tx_hashes" => batch.l1_transaction_hashes,
+          "l1_timestamp" => batch.l1_timestamp
+        }
+      end)
+
+    %{
+      items: items,
       next_page_params: next_page_params
     }
   end
 
-  def render("output_roots.json", %{
+  def render("optimism_output_roots.json", %{
         roots: roots,
-        total: total,
         next_page_params: next_page_params
       }) do
     %{
@@ -50,14 +70,12 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
             "output_root" => r.output_root
           }
         end),
-      total: total,
       next_page_params: next_page_params
     }
   end
 
   def render("optimism_deposits.json", %{
         deposits: deposits,
-        total: total,
         next_page_params: next_page_params
       }) do
     %{
@@ -72,14 +90,12 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
             "l2_tx_gas_limit" => deposit.l2_transaction.gas
           }
         end),
-      total: total,
       next_page_params: next_page_params
     }
   end
 
   def render("optimism_withdrawals.json", %{
         withdrawals: withdrawals,
-        total: total,
         next_page_params: next_page_params,
         conn: conn
       }) do
@@ -99,7 +115,7 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
                  {:ok, address} <-
                    Chain.hash_to_address(
                      w.from,
-                     [necessity_by_association: %{:names => :optional, :smart_contract => :optional}],
+                     [necessity_by_association: %{:names => :optional, :smart_contract => :optional}, api?: true],
                      false
                    ) do
               address
@@ -121,15 +137,18 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
             "challenge_period_end" => challenge_period_end
           }
         end),
-      total: total,
       next_page_params: next_page_params
     }
+  end
+
+  def render("optimism_items_count.json", %{count: count}) do
+    count
   end
 
   defp withdrawal_status(w) do
     if is_nil(w.l1_transaction_hash) do
       l1_timestamp =
-        Repo.one(
+        Repo.replica().one(
           from(
             we in OptimismWithdrawalEvent,
             select: we.l1_timestamp,
@@ -139,7 +158,7 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
 
       if is_nil(l1_timestamp) do
         last_root_timestamp =
-          Repo.one(
+          Repo.replica().one(
             from(root in OptimismOutputRoot,
               select: root.l1_timestamp,
               order_by: [desc: root.l2_output_index],
@@ -153,10 +172,10 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
           {"Ready to prove", nil}
         end
       else
-        if DateTime.compare(l1_timestamp, DateTime.add(DateTime.utc_now(), -604_800, :second)) == :lt do
+        if DateTime.compare(l1_timestamp, DateTime.add(DateTime.utc_now(), -@challenge_period, :second)) == :lt do
           {"Ready for relay", nil}
         else
-          {"In challenge period", DateTime.add(l1_timestamp, 604_800, :second)}
+          {"In challenge period", DateTime.add(l1_timestamp, @challenge_period, :second)}
         end
       end
     else
