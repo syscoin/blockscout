@@ -13,11 +13,12 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
   import EthereumJSONRPC, only: [json_rpc: 2, quantity_to_integer: 1]
 
   alias EthereumJSONRPC.Block.ByNumber
+  alias EthereumJSONRPC.Blocks
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.OptimismWithdrawalEvent
   alias Indexer.Fetcher.Optimism
 
-  @fetcher_name :optimism_withdrawal_event
+  @fetcher_name :optimism_withdrawal_events
 
   # 32-byte signature of the event WithdrawalProven(bytes32 indexed withdrawalHash, address indexed from, address indexed to)
   @withdrawal_proven_event "0x67a6208cfcc0801d50f6cbe764733f4fddf66ac0b04442061a8a8c0cb6b63f62"
@@ -36,8 +37,6 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
     Supervisor.child_spec(spec, [])
   end
 
-  def fetcher_name, do: @fetcher_name
-
   def start_link(args, gen_server_options \\ []) do
     GenServer.start_link(__MODULE__, args, Keyword.put_new(gen_server_options, :name, __MODULE__))
   end
@@ -47,7 +46,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
     Logger.metadata(fetcher: @fetcher_name)
 
     env = Application.get_all_env(:indexer)[__MODULE__]
-    optimism_l1_portal = Application.get_env(:indexer, :optimism_l1_portal)
+    optimism_l1_portal = Application.get_all_env(:indexer)[Indexer.Fetcher.Optimism][:optimism_l1_portal]
 
     Optimism.init(env, optimism_l1_portal, __MODULE__)
   end
@@ -127,42 +126,29 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
     new_start_block = last_written_block + 1
     {:ok, new_end_block} = Optimism.get_block_number_by_tag("latest", json_rpc_named_arguments, 100_000_000)
 
-    if new_end_block == last_written_block do
-      # there is no new block, so wait for some time to let the chain issue the new block
-      :timer.sleep(max(block_check_interval - Timex.diff(Timex.now(), time_before, :milliseconds), 0))
-    end
+    delay =
+      if new_end_block == last_written_block do
+        # there is no new block, so wait for some time to let the chain issue the new block
+        max(block_check_interval - Timex.diff(Timex.now(), time_before, :milliseconds), 0)
+      else
+        0
+      end
 
-    Process.send(self(), :continue, [])
+    Process.send_after(self(), :continue, delay)
 
     {:noreply, %{state | start_block: new_start_block, end_block: new_end_block}}
   end
 
   @impl GenServer
-  def handle_info({ref, _result}, %{reorg_monitor_task: %Task{ref: ref}} = state) do
-    Process.demonitor(ref, [:flush])
-    {:noreply, %{state | reorg_monitor_task: nil}}
+  def handle_info({:chain_event, :optimism_reorg_block, :realtime, block_number}, state) do
+    Optimism.reorg_block_push(@fetcher_name, block_number)
+    {:noreply, state}
   end
 
-  def handle_info(
-        {:DOWN, ref, :process, pid, reason},
-        %{
-          reorg_monitor_task: %Task{pid: pid, ref: ref},
-          block_check_interval: block_check_interval,
-          json_rpc_named_arguments: json_rpc_named_arguments
-        } = state
-      ) do
-    if reason === :normal do
-      {:noreply, %{state | reorg_monitor_task: nil}}
-    else
-      Logger.error(fn -> "Reorgs monitor task exited due to #{inspect(reason)}. Rerunning..." end)
-
-      task =
-        Task.Supervisor.async_nolink(Indexer.Fetcher.OptimismWithdrawalEvent.TaskSupervisor, fn ->
-          Optimism.reorg_monitor(@fetcher_name, block_check_interval, json_rpc_named_arguments)
-        end)
-
-      {:noreply, %{state | reorg_monitor_task: task}}
-    end
+  @impl GenServer
+  def handle_info({ref, _result}, state) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, state}
   end
 
   defp prepare_events(events, json_rpc_named_arguments) do
@@ -214,11 +200,10 @@ defmodule Indexer.Fetcher.OptimismWithdrawalEvent do
       |> Enum.reduce(%{}, fn event, acc ->
         Map.put(acc, event["blockNumber"], 0)
       end)
-      |> Enum.map(fn {block_number, _} -> block_number end)
-      |> Enum.with_index()
-      |> Enum.map(fn {block_number, id} ->
-        ByNumber.request(%{number: block_number, id: id}, false, false)
-      end)
+      |> Stream.map(fn {block_number, _} -> %{number: block_number} end)
+      |> Stream.with_index()
+      |> Enum.into(%{}, fn {params, id} -> {id, params} end)
+      |> Blocks.requests(&ByNumber.request(&1, false, false))
 
     case json_rpc(request, json_rpc_named_arguments) do
       {:ok, responses} ->

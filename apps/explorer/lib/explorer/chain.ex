@@ -54,7 +54,6 @@ defmodule Explorer.Chain do
     InternalTransaction,
     Log,
     OptimismDeposit,
-    OptimismFrameSequence,
     OptimismOutputRoot,
     OptimismTxnBatch,
     OptimismWithdrawal,
@@ -2470,18 +2469,11 @@ defmodule Explorer.Chain do
 
     base_query =
       from(tb in OptimismTxnBatch,
-        inner_join: fs in OptimismFrameSequence,
-        on: fs.id == tb.frame_sequence_id,
-        order_by: [desc: tb.l2_block_number],
-        select: %{
-          l2_block_number: tb.l2_block_number,
-          epoch_number: tb.epoch_number,
-          l1_transaction_hashes: fs.l1_transaction_hashes,
-          l1_timestamp: fs.l1_timestamp
-        }
+        order_by: [desc: tb.l2_block_number]
       )
 
     base_query
+    |> join_association(:frame_sequence, :required)
     |> page_txn_batches(paging_options)
     |> limit(^paging_options.page_size)
     |> select_repo(options).all()
@@ -2574,120 +2566,6 @@ defmodule Explorer.Chain do
   end
 
   @doc """
-  Lists `t:Explorer.Chain.OptimismTxnBatch.t/0`'s' in descending order based on l2_block_number.
-
-  """
-  @spec list_txn_batches :: [OptimismTxnBatch.t()]
-  def list_txn_batches(options \\ []) do
-    paging_options = Keyword.get(options, :paging_options, @default_paging_options)
-
-    base_query =
-      from(tb in OptimismTxnBatch,
-        inner_join: fs in OptimismFrameSequence,
-        on: fs.id == tb.frame_sequence_id,
-        order_by: [desc: tb.l2_block_number],
-        select: %{
-          l2_block_number: tb.l2_block_number,
-          epoch_number: tb.epoch_number,
-          l1_transaction_hashes: fs.l1_transaction_hashes,
-          l1_timestamp: fs.l1_timestamp
-        }
-      )
-
-    base_query
-    |> page_txn_batches(paging_options)
-    |> limit(^paging_options.page_size)
-    |> Repo.all()
-  end
-
-  def get_table_rows_total_count(module) do
-    table_name = module.__schema__(:source)
-
-    count = CacheHelper.estimated_count_from(table_name)
-
-    if is_nil(count) do
-      Repo.aggregate(module, :count, timeout: :infinity)
-    else
-      count
-    end
-  end
-
-  @doc """
-  Lists `t:Explorer.Chain.OptimismOutputRoot.t/0`'s' in descending order based on output root index.
-
-  """
-  @spec list_output_roots :: [OptimismOutputRoot.t()]
-  def list_output_roots(options \\ []) do
-    paging_options = Keyword.get(options, :paging_options, @default_paging_options)
-
-    base_query =
-      from(r in OptimismOutputRoot,
-        order_by: [desc: r.l2_output_index],
-        select: r
-      )
-
-    base_query
-    |> page_output_roots(paging_options)
-    |> limit(^paging_options.page_size)
-    |> Repo.all()
-  end
-
-  @doc """
-  Lists `t:Explorer.Chain.OptimismDeposit.t/0`'s' in descending order based on l1_block_number and l2_transaction_hash.
-
-  """
-  @spec list_optimism_deposits :: [OptimismDeposit.t()]
-  @spec list_optimism_deposits([paging_options]) :: [OptimismDeposit.t()]
-  def list_optimism_deposits(options \\ []) do
-    paging_options = Keyword.get(options, :paging_options, @default_paging_options)
-
-    base_query =
-      from(d in OptimismDeposit,
-        order_by: [desc: d.l1_block_number, desc: d.l2_transaction_hash]
-      )
-
-    base_query
-    |> join_association(:l2_transaction, :required)
-    |> page_deposits(paging_options)
-    |> limit(^paging_options.page_size)
-    |> Repo.all()
-  end
-
-  @doc """
-  Lists `t:Explorer.Chain.OptimismWithdrawal.t/0`'s' in descending order based on message nonce.
-
-  """
-  @spec list_optimism_withdrawals :: [OptimismWithdrawal.t()]
-  def list_optimism_withdrawals(options \\ []) do
-    paging_options = Keyword.get(options, :paging_options, @default_paging_options)
-
-    base_query =
-      from(w in OptimismWithdrawal,
-        order_by: [desc: w.msg_nonce],
-        left_join: l2_tx in Transaction,
-        on: w.l2_transaction_hash == l2_tx.hash,
-        left_join: l2_block in Block,
-        on: w.l2_block_number == l2_block.number,
-        left_join: we in OptimismWithdrawalEvent,
-        on: we.withdrawal_hash == w.hash and we.l1_event_type == :WithdrawalFinalized,
-        select: %{
-          msg_nonce: w.msg_nonce,
-          hash: w.hash,
-          l2_block_number: w.l2_block_number,
-          l2_timestamp: l2_block.timestamp,
-          l2_transaction_hash: w.l2_transaction_hash,
-          l1_transaction_hash: we.l1_transaction_hash,
-          from: l2_tx.from_address_hash
-        }
-      )
-
-    base_query
-    |> page_optimism_withdrawals(paging_options)
-    |> limit(^paging_options.page_size)
-    |> Repo.all()
-  end
-
-  @doc """
   Lists the top `t:Explorer.Chain.Token.t/0`'s'.
 
   """
@@ -2727,7 +2605,7 @@ defmodule Explorer.Chain do
 
   defp base_token_query(empty_type) when empty_type in [nil, []] do
     from(t in Token,
-      order_by: [desc_nulls_last: t.holder_count, asc: t.name],
+      order_by: [desc_nulls_last: t.circulating_market_cap, desc_nulls_last: t.holder_count, asc: t.name],
       preload: [:contract_address]
     )
   end
@@ -2735,7 +2613,7 @@ defmodule Explorer.Chain do
   defp base_token_query(token_types) when is_list(token_types) do
     from(t in Token,
       where: t.type in ^token_types,
-      order_by: [desc_nulls_last: t.holder_count, asc: t.name],
+      order_by: [desc_nulls_last: t.circulating_market_cap, desc_nulls_last: t.holder_count, asc: t.name],
       preload: [:contract_address]
     )
   end
@@ -2894,24 +2772,25 @@ defmodule Explorer.Chain do
   end
 
   @doc """
-  Return the balance in usd corresponding to this token. Return nil if the usd_value of the token is not present.
+  Return the balance in usd corresponding to this token. Return nil if the fiat_value of the token is not present.
   """
-  def balance_in_usd(_token_balance, %{usd_value: nil}) do
+  def balance_in_fiat(_token_balance, %{fiat_value: fiat_value, decimals: decimals})
+      when nil in [fiat_value, decimals] do
     nil
   end
 
-  def balance_in_usd(token_balance, %{usd_value: usd_value, decimals: decimals}) do
+  def balance_in_fiat(token_balance, %{fiat_value: fiat_value, decimals: decimals}) do
     tokens = CurrencyHelpers.divide_decimals(token_balance.value, decimals)
-    Decimal.mult(tokens, usd_value)
+    Decimal.mult(tokens, fiat_value)
   end
 
-  def balance_in_usd(%{token: %{usd_value: nil}}) do
+  def balance_in_fiat(%{token: %{fiat_value: nil}}) do
     nil
   end
 
-  def balance_in_usd(token_balance) do
+  def balance_in_fiat(token_balance) do
     tokens = CurrencyHelpers.divide_decimals(token_balance.value, token_balance.token.decimals)
-    price = token_balance.token.usd_value
+    price = token_balance.token.fiat_value
     Decimal.mult(tokens, price)
   end
 
@@ -3488,16 +3367,10 @@ defmodule Explorer.Chain do
         limit: 1
       )
 
-    response =
-      if from_api do
-        query
-        |> Repo.replica().one()
-      else
-        query
-        |> Repo.one()
-      end
+    repo = if from_api, do: Repo.replica(), else: Repo
 
-    response
+    query
+    |> repo.one(timeout: :infinity)
     |> case do
       nil ->
         {:error, :not_found}
@@ -4851,11 +4724,22 @@ defmodule Explorer.Chain do
 
   defp page_tokens(query, %PagingOptions{key: nil}), do: query
 
-  defp page_tokens(query, %PagingOptions{key: {holder_count, token_name}}) do
+  defp page_tokens(query, %PagingOptions{key: {nil, holder_count, name}}) do
     from(token in query,
       where:
-        (token.holder_count == ^holder_count and token.name > ^token_name) or
-          token.holder_count < ^holder_count
+        is_nil(token.circulating_market_cap) and
+          (token.holder_count < ^holder_count or (token.holder_count == ^holder_count and token.name > ^name))
+    )
+  end
+
+  defp page_tokens(query, %PagingOptions{key: {circulating_market_cap, holder_count, name}}) do
+    from(token in query,
+      where:
+        is_nil(token.circulating_market_cap) or
+          (token.circulating_market_cap < ^circulating_market_cap or
+             (token.circulating_market_cap == ^circulating_market_cap and token.holder_count < ^holder_count) or
+             (token.circulating_market_cap == ^circulating_market_cap and token.holder_count == ^holder_count and
+                token.name > ^name))
     )
   end
 
@@ -5005,12 +4889,40 @@ defmodule Explorer.Chain do
 
   def page_current_token_balances(query, %PagingOptions{key: nil}), do: query
 
-  def page_current_token_balances(query, %PagingOptions{key: {name, type, value}}) do
+  def page_current_token_balances(query, %PagingOptions{key: {nil, value, id}}) do
+    fiat_balance = CurrentTokenBalance.fiat_value_query()
+
+    condition =
+      dynamic(
+        [ctb, t],
+        is_nil(^fiat_balance) and
+          (ctb.value < ^value or
+             (ctb.value == ^value and ctb.id < ^id))
+      )
+
     where(
       query,
       [ctb, t],
-      ctb.value < ^value or (ctb.value == ^value and t.type < ^type) or
-        (ctb.value == ^value and t.type == ^type and t.name < ^name)
+      ^condition
+    )
+  end
+
+  def page_current_token_balances(query, %PagingOptions{key: {fiat_value, value, id}}) do
+    fiat_balance = CurrentTokenBalance.fiat_value_query()
+
+    condition =
+      dynamic(
+        [ctb, t],
+        ^fiat_balance < ^fiat_value or is_nil(^fiat_balance) or
+          (^fiat_balance == ^fiat_value and
+             (ctb.value < ^value or
+                (ctb.value == ^value and ctb.id < ^id)))
+      )
+
+    where(
+      query,
+      [ctb, t],
+      ^condition
     )
   end
 
