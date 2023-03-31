@@ -446,10 +446,79 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
       end
     end)
   end
+  # SYSCOIN
+  defp get_blob_from_cloud(vh) when is_binary(vh) do
+    vh_hex = Base.encode16(vh, case: :lower)
+    url = "http://poda.tanenbaum.io/vh/" <> vh_hex
+    case HTTPoison.get(url, [], timeout: 60_000, recv_timeout: 60_000, follow_redirect: true) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
+        {:ok, to_string(body)}
+      {:ok, %HTTPoison.Response{status_code: code}} ->
+        {:error, "Request to #{url} returned status code #{code}"}
+      {:error, reason} ->
+        {:error, "Request to #{url} failed: #{inspect reason}"}
+    end
+  end
+
+  defp get_blob_from_cloud(_), do: {:error, "Invalid vh parameter"}
+
+  defp fetch_frame(input) do
+    function_signature = <<208, 248, 147, 68>> # hardcoded signature for appendSequencerBatch()
+
+    # Remove function hash from calldata
+    input = :binary.part(input, 4, byte_size(input) - 4)
+
+    # Get function signature from calldata
+    sig = :binary.part(input, 0, 4)
+    if sig != function_signature do
+      Logger.warning("append function not found as method signature")
+      {:error, "append function not found as method signature"}
+    end
+
+    # Check calldata length is a multiple of 32 bytes
+    len_input = byte_size(input)
+    if rem(len_input, 32) != 0 do
+      Logger.warning("DataFromEVMTransactions: Invalid length of calldata, not mod of 32")
+      {:error, "Invalid length of calldata, not mod of 32"}
+    end
+
+    # Get version hashes from calldata and lookup data
+    num_vhs = div(len_input, 32)
+    input_binary =
+      for i <- 0..(num_vhs-1), reduce: [] do
+       acc ->
+        # Get version hash from calldata and lookup data via Syscoinclient
+        start = i * 32
+        vh = input |> :binary.part(start, 32)
+        # get data from archiving service
+        {:ok, data} = get_blob_from_cloud(vh)
+        if data != :error do
+          data = Base.decode16!(data, case: :lower)
+          # Check data is valid locally
+          vh_data = data |> ExKeccak.hash_256()
+          if vh != vh_data do
+            vh_encoded = Base.encode16(vh, case: :lower)
+            vh_data_encoded = Base.encode16(vh_data, case: :lower)
+            Logger.warning("DataFromEVMTransactions: blob data hash mismatch want #{vh_encoded}, have #{vh_data_encoded}")
+            acc
+          else
+            [data | acc]
+          end
+        else
+          Logger.warning("DataFromEVMTransactions: Failed to fetch L1 block info and receipts")
+          # Instead of continuing, this is a hard reset which means the entire set of blobs for this block/tx should be refetched
+          {:error, "Failed to fetch L1 block info and receipts"}
+        end      
+      end
+    input_binary
+  end
+
+
 
   defp input_to_frame("0x" <> input) do
     input_binary = Base.decode16!(input, case: :mixed)
-
+    # SYSCOIN
+    input_binary = hd(fetch_frame(input_binary))
     # the structure of the input is as follows:
     #
     # input = derivation_version ++ channel_id ++ frame_number ++ frame_data_length ++ frame_data ++ is_last
@@ -488,7 +557,6 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     is_last_offset = frame_data_offset + frame_data_length
     is_last_size = 1
     is_last = :binary.decode_unsigned(binary_part(input_binary, is_last_offset, is_last_size)) > 0
-
     %{number: frame_number, data: frame_data, is_last: is_last}
   end
 
@@ -687,7 +755,6 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     |> Enum.filter(fn t ->
       from_address_hash = Map.get(t, :from_address_hash)
       to_address_hash = Map.get(t, :to_address_hash)
-
       if is_nil(from_address_hash) or is_nil(to_address_hash) do
         false
       else
