@@ -464,12 +464,13 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
   defp fetch_frame(input) do
     function_signature = <<208, 248, 147, 68>> # hardcoded signature for appendSequencerBatch()
+    
+    # Get function signature from calldata
+    sig = :binary.part(input, 0, 4)
 
     # Remove function hash from calldata
     input = :binary.part(input, 4, byte_size(input) - 4)
 
-    # Get function signature from calldata
-    sig = :binary.part(input, 0, 4)
     if sig != function_signature do
       Logger.warning("append function not found as method signature")
       {:error, "append function not found as method signature"}
