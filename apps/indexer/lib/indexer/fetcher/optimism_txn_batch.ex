@@ -471,47 +471,47 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     # Remove function hash from calldata
     input = :binary.part(input, 4, byte_size(input) - 4)
 
-    if sig != function_signature do
+    if sig == function_signature do
+      # Check calldata length is a multiple of 32 bytes
+      len_input = byte_size(input)
+      if rem(len_input, 32) == 0 do
+        # Get version hashes from calldata and lookup data
+        num_vhs = div(len_input, 32)
+        input_binary =
+          for i <- 0..(num_vhs-1), reduce: [] do
+          acc ->
+            # Get version hash from calldata and lookup data via Syscoinclient
+            start = i * 32
+            vh = input |> :binary.part(start, 32)
+            # get data from archiving service
+            {:ok, data} = get_blob_from_cloud(vh)
+            if data != :error do
+              data = Base.decode16!(data, case: :lower)
+              # Check data is valid locally
+              vh_data = data |> ExKeccak.hash_256()
+              if vh != vh_data do
+                vh_encoded = Base.encode16(vh, case: :lower)
+                vh_data_encoded = Base.encode16(vh_data, case: :lower)
+                Logger.warning("DataFromEVMTransactions: blob data hash mismatch want #{vh_encoded}, have #{vh_data_encoded}")
+                acc
+              else
+                [data | acc]
+              end
+            else
+              Logger.warning("DataFromEVMTransactions: Failed to fetch L1 block info and receipts")
+              # Instead of continuing, this is a hard reset which means the entire set of blobs for this block/tx should be refetched
+              {:error, "Failed to fetch L1 block info and receipts"}
+            end      
+          end
+          {:ok, hd(input_binary)}
+      else
+        Logger.warning("DataFromEVMTransactions: Invalid length of calldata, not mod of 32")
+        {:error, "Invalid length of calldata, not mod of 32"}
+      end
+    else
       Logger.warning("append function not found as method signature")
       {:error, "append function not found as method signature"}
     end
-
-    # Check calldata length is a multiple of 32 bytes
-    len_input = byte_size(input)
-    if rem(len_input, 32) != 0 do
-      Logger.warning("DataFromEVMTransactions: Invalid length of calldata, not mod of 32")
-      {:error, "Invalid length of calldata, not mod of 32"}
-    end
-
-    # Get version hashes from calldata and lookup data
-    num_vhs = div(len_input, 32)
-    input_binary =
-      for i <- 0..(num_vhs-1), reduce: [] do
-       acc ->
-        # Get version hash from calldata and lookup data via Syscoinclient
-        start = i * 32
-        vh = input |> :binary.part(start, 32)
-        # get data from archiving service
-        {:ok, data} = get_blob_from_cloud(vh)
-        if data != :error do
-          data = Base.decode16!(data, case: :lower)
-          # Check data is valid locally
-          vh_data = data |> ExKeccak.hash_256()
-          if vh != vh_data do
-            vh_encoded = Base.encode16(vh, case: :lower)
-            vh_data_encoded = Base.encode16(vh_data, case: :lower)
-            Logger.warning("DataFromEVMTransactions: blob data hash mismatch want #{vh_encoded}, have #{vh_data_encoded}")
-            acc
-          else
-            [data | acc]
-          end
-        else
-          Logger.warning("DataFromEVMTransactions: Failed to fetch L1 block info and receipts")
-          # Instead of continuing, this is a hard reset which means the entire set of blobs for this block/tx should be refetched
-          {:error, "Failed to fetch L1 block info and receipts"}
-        end      
-      end
-    input_binary
   end
 
 
@@ -519,47 +519,54 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
   defp input_to_frame("0x" <> input) do
     input_binary = Base.decode16!(input, case: :mixed)
     # SYSCOIN
-    input_binary = hd(fetch_frame(input_binary))
-    # the structure of the input is as follows:
-    #
-    # input = derivation_version ++ channel_id ++ frame_number ++ frame_data_length ++ frame_data ++ is_last
-    #
-    # derivation_version = uint8
-    # channel_id         = bytes16
-    # frame_number       = uint16
-    # frame_data_length  = uint32
-    # frame_data         = bytes
-    # is_last            = bool (uint8)
+    case fetch_frame(input_binary) do
+      {:ok, input_binary} ->
+        # the structure of the input is as follows:
+        #
+        # input = derivation_version ++ channel_id ++ frame_number ++ frame_data_length ++ frame_data ++ is_last
+        #
+        # derivation_version = uint8
+        # channel_id         = bytes16
+        # frame_number       = uint16
+        # frame_data_length  = uint32
+        # frame_data         = bytes
+        # is_last            = bool (uint8)
 
-    # the first byte must be zero (so called Derivation Version)
-    derivation_version_length = 1
-    [0] = :binary.bin_to_list(binary_part(input_binary, 0, derivation_version_length))
+        # the first byte must be zero (so called Derivation Version)
+        derivation_version_length = 1
+        [0] = :binary.bin_to_list(binary_part(input_binary, 0, derivation_version_length))
 
-    # channel id is a random value (we don't use it)
-    channel_id_length = 16
+        # channel id is a random value (we don't use it)
+        channel_id_length = 16
 
-    # frame number consists of 2 bytes
-    frame_number_offset = derivation_version_length + channel_id_length
-    frame_number_size = 2
-    frame_number = :binary.decode_unsigned(binary_part(input_binary, frame_number_offset, frame_number_size))
+        # frame number consists of 2 bytes
+        frame_number_offset = derivation_version_length + channel_id_length
+        frame_number_size = 2
+        frame_number = :binary.decode_unsigned(binary_part(input_binary, frame_number_offset, frame_number_size))
 
-    # frame data length consists of 4 bytes
-    frame_data_length_offset = frame_number_offset + frame_number_size
-    frame_data_length_size = 4
+        # frame data length consists of 4 bytes
+        frame_data_length_offset = frame_number_offset + frame_number_size
+        frame_data_length_size = 4
 
-    frame_data_length =
-      :binary.decode_unsigned(binary_part(input_binary, frame_data_length_offset, frame_data_length_size))
+        frame_data_length =
+          :binary.decode_unsigned(binary_part(input_binary, frame_data_length_offset, frame_data_length_size))
 
-    # frame data is a byte array of frame_data_length size
-    frame_data_offset = frame_data_length_offset + frame_data_length_size
-    frame_data = binary_part(input_binary, frame_data_offset, frame_data_length)
+        # frame data is a byte array of frame_data_length size
+        frame_data_offset = frame_data_length_offset + frame_data_length_size
+        frame_data = binary_part(input_binary, frame_data_offset, frame_data_length)
 
-    # is_last is 1-byte item
-    is_last_offset = frame_data_offset + frame_data_length
-    is_last_size = 1
-    is_last = :binary.decode_unsigned(binary_part(input_binary, is_last_offset, is_last_size)) > 0
-    %{number: frame_number, data: frame_data, is_last: is_last}
+        # is_last is 1-byte item
+        is_last_offset = frame_data_offset + frame_data_length
+        is_last_size = 1
+        is_last = :binary.decode_unsigned(binary_part(input_binary, is_last_offset, is_last_size)) > 0
+        %{number: frame_number, data: frame_data, is_last: is_last}
+      {:error, reason} ->
+        # Handle error from fetch_frame function
+        Logger.warning("Error fetching frame: #{reason}")
+        %{error: reason}
+    end
   end
+
 
   defp next_frame_sequence_id(last_known_sequence) when is_nil(last_known_sequence) do
     last_known_id =
