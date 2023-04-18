@@ -559,8 +559,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
         is_last_offset = frame_data_offset + frame_data_length
         is_last_size = 1
         is_last = :binary.decode_unsigned(binary_part(input_binary, is_last_offset, is_last_size)) > 0
-
-    %{number: frame_number, data: frame_data, is_last: is_last}
+        %{number: frame_number, data: frame_data, is_last: is_last}
       {:error, reason} ->
         # Handle error from fetch_frame function
         Logger.warning("Error fetching frame: #{reason}")
