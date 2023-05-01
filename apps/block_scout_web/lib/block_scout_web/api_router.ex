@@ -116,6 +116,7 @@ defmodule BlockScoutWeb.ApiRouter do
 
     scope "/transactions" do
       get("/", V2.TransactionController, :transactions)
+      get("/watchlist", V2.TransactionController, :watchlist_transactions)
       get("/:transaction_hash", V2.TransactionController, :transaction)
       get("/:transaction_hash/token-transfers", V2.TransactionController, :token_transfers)
       get("/:transaction_hash/internal-transactions", V2.TransactionController, :internal_transactions)
@@ -162,6 +163,7 @@ defmodule BlockScoutWeb.ApiRouter do
       get("/blocks", V2.MainPageController, :blocks)
       get("/optimism-deposits", V2.MainPageController, :optimism_deposits)
       get("/transactions", V2.MainPageController, :transactions)
+      get("/transactions/watchlist", V2.MainPageController, :watchlist_transactions)
       get("/indexing-status", V2.MainPageController, :indexing_status)
     end
 

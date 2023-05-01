@@ -21,7 +21,6 @@ services:
       - "${HOME}/blockscout-data/postgres-data:/var/lib/postgresql/data"
 
   blockscout:
-    platform: linux/x86_64
     depends_on:
       - db
       - smart-contract-verifier
