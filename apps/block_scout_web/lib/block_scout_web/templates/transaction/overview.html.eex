@@ -207,7 +207,7 @@
                   <%= link(
                         @transaction.l1_block_number,
                         class: "transaction__link",
-                        to: "https://tanenbaum.io/block/#{@transaction.l1_block_number}"
+                        to: "#{l1_explorer()}/block/#{@transaction.l1_block_number}"
                       ) %>
                 <% else %>
                   <%= formatted_result(status) %>

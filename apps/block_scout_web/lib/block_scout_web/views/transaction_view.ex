@@ -572,6 +572,10 @@ defmodule BlockScoutWeb.TransactionView do
     Application.get_env(:block_scout_web, :show_tenderly_link)
   end
 
+  defp l1_explorer do
+    System.get_env("L1_EXPLORER") || "https://explorer.syscoin.org"
+  end
+
   defp tenderly_chain_path do
     System.get_env("TENDERLY_CHAIN_PATH") || "/"
   end

@@ -453,7 +453,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
   # SYSCOIN
   defp get_blob_from_cloud(vh) when is_binary(vh) do
     vh_hex = Base.encode16(vh, case: :lower)
-    url = "http://poda.tanenbaum.io/vh/" <> vh_hex
+    url = System.get_env("PODA_URL") <> vh_hex
     case HTTPoison.get(url, [], timeout: 60_000, recv_timeout: 60_000, follow_redirect: true) do
       {:ok, %HTTPoison.Response{status_code: 200, body: body}} ->
         {:ok, to_string(body)}
