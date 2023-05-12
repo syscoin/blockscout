@@ -575,7 +575,6 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
             is_last_size
 
         input_length_current = byte_size(input_binary)
-
         if input_length_current == input_length_must_be do
           # frame data is a byte array of frame_data_length size
           frame_data_offset = frame_data_length_offset + frame_data_length_size
@@ -591,6 +590,11 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
           # for example, the case for Base Goerli batch L1 transaction: https://goerli.etherscan.io/tx/0xa43fa9da683a6157a114e3175a625b5aed85d8c573aae226768c58a924a17be0
           input_to_frame("0x" <> Base.encode16(binary_part(input_binary, 1, input_length_current - 1)))
         end
+      {:error, reason} ->
+        # Handle error from fetch_frame function
+        Logger.warning("Error fetching frame: #{reason}")
+        %{error: reason}
+      end
     end
   end
 
