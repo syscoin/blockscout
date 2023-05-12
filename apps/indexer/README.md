@@ -37,6 +37,7 @@ Some data has to be extracted from already fetched data, and there're several tr
 - `optimism_deposit`: fetches deposits to Optimism chain
 - `optimism_withdrawal`: fetches withdrawals from Optimism chain
 - `optimism_withdrawal_event`: fetches withdrawal events on L1 chain
+- `withdrawals`: optionally fetches withdrawals for old blocks (in the given from boundary of block numbers)
 
 Both block fetchers retrieve/extract the blocks themselves and the following additional data:
 
@@ -46,6 +47,7 @@ Both block fetchers retrieve/extract the blocks themselves and the following add
 - `token_transfers`
 - `transaction_actions`
 - `addresses`
+- `withdrawals`
 
 The following stubs for further async fetching are inserted as well:
 

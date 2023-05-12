@@ -32,7 +32,8 @@ defmodule BlockScoutWeb.Chain do
     Token.Instance,
     TokenTransfer,
     Transaction,
-    Wei
+    Wei,
+    Withdrawal
   }
 
   alias Explorer.PagingOptions
@@ -468,6 +469,10 @@ defmodule BlockScoutWeb.Chain do
   end
 
   defp paging_params(%OptimismOutputRoot{l2_output_index: index}) do
+    %{"index" => index}
+  end
+
+  defp paging_params(%Withdrawal{index: index}) do
     %{"index" => index}
   end
 
