@@ -590,11 +590,11 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
           # for example, the case for Base Goerli batch L1 transaction: https://goerli.etherscan.io/tx/0xa43fa9da683a6157a114e3175a625b5aed85d8c573aae226768c58a924a17be0
           input_to_frame("0x" <> Base.encode16(binary_part(input_binary, 1, input_length_current - 1)))
         end
+      # SYSCOIN
       {:error, reason} ->
         # Handle error from fetch_frame function
         Logger.warning("Error fetching frame: #{reason}")
         %{error: reason}
-      end
     end
   end
 
