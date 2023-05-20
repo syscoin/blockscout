@@ -5,8 +5,6 @@ services:
     extends:
       file: ./services/docker-compose-redis.yml
       service: redis_db
-    volumes:
-      - "${HOME}/blockscout-data/redis-data:/data"
 
   db:
     extends:
@@ -17,8 +15,6 @@ services:
       postgres -c 'max_connections=250'
       && postgres -c 'shared_buffers=256MB'
       && postgres -c 'work_mem=128MB'
-    volumes:
-      - "${HOME}/blockscout-data/postgres-data:/var/lib/postgresql/data"
 
   blockscout:
     depends_on:
@@ -47,7 +43,7 @@ services:
     ports:
       - 4000:4000
     volumes:
-      - "${HOME}/blockscout-data/logs/:/app/logs"
+      - ./logs/:/app/logs/
 
   smart-contract-verifier:
     extends:
