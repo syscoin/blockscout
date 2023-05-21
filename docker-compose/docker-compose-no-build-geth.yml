@@ -33,13 +33,6 @@ services:
       - 'host.docker.internal:host-gateway'
     env_file:
       -  ./envs/common-blockscout.env
-    environment:
-        ETHEREUM_JSONRPC_VARIANT: 'geth'
-        BLOCK_TRANSFORMER: 'base'
-        ETHEREUM_JSONRPC_HTTP_URL: https://rpc-tanenbaum.rollux.com/
-        DATABASE_URL: postgresql://postgres:@host.docker.internal:7432/blockscout?ssl=false
-        ECTO_USE_SSL: 'false'
-        SECRET_KEY_BASE: '56NtB48ear7+wMSf0IQuWDAAazhpb31qyc7GiyspBP2vh7t5zlCsF5QDv76chXeN'
     ports:
       - 4000:4000
     volumes:
