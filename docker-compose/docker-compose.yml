@@ -10,6 +10,8 @@ services:
     extends:
       file: ./services/docker-compose-db.yml
       service: db
+    shm_size: "256MB"
+    command: postgres -c 'max_connections=250' -c 'shared_buffers=256MB' -c 'work_mem=128MB'
 
   blockscout:
     depends_on:
