@@ -82,7 +82,6 @@ defmodule EthereumJSONRPC.Transaction do
       ...>     "blockNumber" => 46147,
       ...>     "from" => "0xa1e4380a3b1f749673e270229993ee55f35663b4",
       ...>     "gas" => 21000,
-      ...>     "gasPrice" => 50000000000000,
       ...>     "hash" => "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060",
       ...>     "input" => "0x",
       ...>     "nonce" => 0,
@@ -90,6 +89,7 @@ defmodule EthereumJSONRPC.Transaction do
       ...>     "s" => 31606574786494953692291101914709926755545765281581808821704454381804773090106,
       ...>     "to" => "0x5df9b87991262f6ba471f09758cde1c0fc1de734",
       ...>     "transactionIndex" => 0,
+      ...>     "type" => 2,
       ...>     "v" => 28,
       ...>     "value" => 31337
       ...>   }
@@ -99,7 +99,6 @@ defmodule EthereumJSONRPC.Transaction do
         block_number: 46147,
         from_address_hash: "0xa1e4380a3b1f749673e270229993ee55f35663b4",
         gas: 21000,
-        gas_price: 50000000000000,
         hash: "0x5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060",
         index: 0,
         input: "0x",
@@ -107,9 +106,11 @@ defmodule EthereumJSONRPC.Transaction do
         r: 61965845294689009770156372156374760022787886965323743865986648153755601564112,
         s: 31606574786494953692291101914709926755545765281581808821704454381804773090106,
         to_address_hash: "0x5df9b87991262f6ba471f09758cde1c0fc1de734",
+        type: 2,
         v: 28,
         value: 31337,
-        transaction_index: 0
+        transaction_index: 0,
+        gas_price: 0
       }
 
   Erigon `elixir` from txpool_content method can be converted to `params`.
@@ -581,6 +582,49 @@ defmodule EthereumJSONRPC.Transaction do
       value: value,
       transaction_index: index,
       type: type
+    }
+
+    if transaction["creates"] do
+      Map.put(result, :created_contract_address_hash, transaction["creates"])
+    else
+      result
+    end
+  end
+
+  # without `to`, `maxPriorityFeePerGas`, `maxFeePerGas`, `type` fields (observed on EthereumJSONRPC tests)
+  def elixir_to_params(
+        %{
+          "blockHash" => block_hash,
+          "blockNumber" => block_number,
+          "from" => from_address_hash,
+          "gas" => gas,
+          "gasPrice" => gas_price,
+          "hash" => hash,
+          "input" => input,
+          "nonce" => nonce,
+          "r" => r,
+          "s" => s,
+          "transactionIndex" => index,
+          "v" => v,
+          "value" => value
+        } = transaction
+      ) do
+    result = %{
+      block_hash: block_hash,
+      block_number: block_number,
+      from_address_hash: from_address_hash,
+      gas: gas,
+      gas_price: gas_price,
+      hash: hash,
+      index: index,
+      input: input,
+      nonce: nonce,
+      r: r,
+      s: s,
+      to_address_hash: nil,
+      v: v,
+      value: value,
+      transaction_index: index
     }
 
     if transaction["creates"] do
