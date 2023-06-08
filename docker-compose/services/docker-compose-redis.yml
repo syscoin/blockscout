@@ -8,4 +8,4 @@ services:
     container_name: redis_db
     command: redis-server
     volumes:
-      - ./redis-data:/data
+      - ${HOME}/blockscout-data/redis-data:/data
