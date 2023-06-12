@@ -487,42 +487,38 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
   defp get_blob_from_cloud(_), do: {:error, "Invalid vh parameter"}
 
   def fetch_frames(version_hashes) do
-    # Initialize the accumulator for blob data
-    accumulator = []
+    accumulator = Enum.reduce(version_hashes, [], fn vh, acc ->
+      case get_blob_from_cloud(vh) do
+        {:ok, data} ->
+          data = Base.decode16!(data, case: :lower)
 
-    for vh <- version_hashes do
-      # Convert vh to binary
-      vh_bin = vh |> :binary.decode_unsigned(:big)
+          # Check data is valid locally
+          vh_data = data |> ExKeccak.hash_256()
 
-      # Get data from archiving service
-      {:ok, data} = get_blob_from_cloud(vh_bin)
+          if vh != vh_data do
+            vh_encoded = Base.encode16(vh, case: :lower)
+            vh_data_encoded = Base.encode16(vh_data, case: :lower)
 
-      if data != :error do
-        data = Base.decode16!(data, case: :lower)
-
-        # Check data is valid locally
-        vh_data = data |> ExKeccak.hash_256()
-
-        if vh_bin != vh_data do
-          vh_encoded = Base.encode16(vh_bin, case: :lower)
-          vh_data_encoded = Base.encode16(vh_data, case: :lower)
-
-          Logger.warning("DataFromEVMTransactions: blob data hash mismatch. Want #{vh_encoded}, have #{vh_data_encoded}")
-        else
-          # Accumulate data
-          accumulator = [data | accumulator]
-        end
-      else
-        Logger.warning("DataFromEVMTransactions: Failed to fetch L1 block info and receipts")
-
-        # Instead of continuing, this is a hard reset which means the entire set of blobs for this block/tx should be refetched
-        return {:error, "Failed to fetch L1 block info and receipts"}
+            Logger.warning("DataFromEVMTransactions: blob data hash mismatch. Want #{vh_encoded}, have #{vh_data_encoded}")
+            acc
+          else
+            # Accumulate data
+            [data | acc]
+          end
+        _ ->
+          Logger.warning("DataFromEVMTransactions: Failed to fetch L1 block info and receipts")
+          acc
       end
-    end
+    end)
 
-    # Return the accumulated data
-    {:ok, accumulator}
+    # Reverse the accumulator and join all blobs into one
+    single_blob = Enum.reverse(accumulator) |> Enum.join("")
+
+    # Return the single concatenated blob
+    {:ok, single_blob}
   end
+
+
 
   defp fetch_frame(input) do
     function_signature = <<0xa3, 0xa5, 0x44, 0xc2>> # hardcoded signature for appendSequencerBatch(bytes32[])
@@ -531,8 +527,8 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     sig = :binary.part(input, 0, 4)
 
     if sig == function_signature do
-      # Remove function hash and offset from calldata
-      input = :binary.part(input, 68, byte_size(input) - 68)
+      # Remove function signature and offset from calldata
+      input = :binary.part(input, 36, byte_size(input) - 36)
 
       # Get the length of the version hashes array
       len_vhs = :binary.decode_unsigned(:binary.part(input, 0, 32), :big)
@@ -562,6 +558,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
       {:error, "appendSequencerBatch function not found as method signature"}
     end
   end
+
 
   defp handle_invalid_frame_number(last_frame_number, frame, tx, batches, sequences, last_channel_id) do
     cond do
