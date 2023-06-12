@@ -486,55 +486,80 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
   defp get_blob_from_cloud(_), do: {:error, "Invalid vh parameter"}
 
+  def fetch_frames(version_hashes) do
+    # Initialize the accumulator for blob data
+    accumulator = []
+
+    for vh <- version_hashes do
+      # Convert vh to binary
+      vh_bin = vh |> :binary.decode_unsigned(:big)
+
+      # Get data from archiving service
+      {:ok, data} = get_blob_from_cloud(vh_bin)
+
+      if data != :error do
+        data = Base.decode16!(data, case: :lower)
+
+        # Check data is valid locally
+        vh_data = data |> ExKeccak.hash_256()
+
+        if vh_bin != vh_data do
+          vh_encoded = Base.encode16(vh_bin, case: :lower)
+          vh_data_encoded = Base.encode16(vh_data, case: :lower)
+
+          Logger.warning("DataFromEVMTransactions: blob data hash mismatch. Want #{vh_encoded}, have #{vh_data_encoded}")
+        else
+          # Accumulate data
+          accumulator = [data | accumulator]
+        end
+      else
+        Logger.warning("DataFromEVMTransactions: Failed to fetch L1 block info and receipts")
+
+        # Instead of continuing, this is a hard reset which means the entire set of blobs for this block/tx should be refetched
+        return {:error, "Failed to fetch L1 block info and receipts"}
+      end
+    end
+
+    # Return the accumulated data
+    {:ok, accumulator}
+  end
+
   defp fetch_frame(input) do
-    function_signature = <<208, 248, 147, 68>> # hardcoded signature for appendSequencerBatch()
-    
+    function_signature = <<0xa3, 0xa5, 0x44, 0xc2>> # hardcoded signature for appendSequencerBatch(bytes32[])
+
     # Get function signature from calldata
     sig = :binary.part(input, 0, 4)
 
-    # Remove function hash from calldata
-    input = :binary.part(input, 4, byte_size(input) - 4)
-
     if sig == function_signature do
+      # Remove function hash and offset from calldata
+      input = :binary.part(input, 68, byte_size(input) - 68)
+
+      # Get the length of the version hashes array
+      len_vhs = :binary.decode_unsigned(:binary.part(input, 0, 32), :big)
+
+      # Remove the length from calldata
+      input = :binary.part(input, 32, byte_size(input) - 32)
+
       # Check calldata length is a multiple of 32 bytes
       len_input = byte_size(input)
+
       if rem(len_input, 32) == 0 do
-        # Get version hashes from calldata and lookup data
-        num_vhs = div(len_input, 32)
-        input_binary =
-          for i <- 0..(num_vhs-1), reduce: [] do
-          acc ->
-            # Get version hash from calldata and lookup data via Syscoinclient
+        # Extract version hashes from calldata
+        version_hashes =
+          for i <- 0..(len_vhs-1) do
             start = i * 32
             vh = input |> :binary.part(start, 32)
-            # get data from archiving service
-            {:ok, data} = get_blob_from_cloud(vh)
-            if data != :error do
-              data = Base.decode16!(data, case: :lower)
-              # Check data is valid locally
-              vh_data = data |> ExKeccak.hash_256()
-              if vh != vh_data do
-                vh_encoded = Base.encode16(vh, case: :lower)
-                vh_data_encoded = Base.encode16(vh_data, case: :lower)
-                Logger.warning("DataFromEVMTransactions: blob data hash mismatch want #{vh_encoded}, have #{vh_data_encoded}")
-                acc
-              else
-                [data | acc]
-              end
-            else
-              Logger.warning("DataFromEVMTransactions: Failed to fetch L1 block info and receipts")
-              # Instead of continuing, this is a hard reset which means the entire set of blobs for this block/tx should be refetched
-              {:error, "Failed to fetch L1 block info and receipts"}
-            end      
+            vh
           end
-          {:ok, hd(input_binary)}
+
+        fetch_frames(version_hashes)
       else
         Logger.warning("DataFromEVMTransactions: Invalid length of calldata, not mod of 32")
         {:error, "Invalid length of calldata, not mod of 32"}
       end
     else
-      Logger.warning("append function not found as method signature")
-      {:error, "append function not found as method signature"}
+      Logger.warning("appendSequencerBatch function not found as method signature")
+      {:error, "appendSequencerBatch function not found as method signature"}
     end
   end
 
