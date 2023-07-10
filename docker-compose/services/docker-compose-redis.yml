@@ -3,9 +3,10 @@ version: '3.8'
 services:
   redis_db:
     image: 'redis:alpine'
-    ports:
-      - 6379:6379
     container_name: redis_db
     command: redis-server
+    ports:
+      - 127.0.0.1:6379:6379	# overwrite mapping from image
     volumes:
       - ${HOME}/blockscout-data/redis-data:/data
+

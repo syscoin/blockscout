@@ -8,5 +8,6 @@ services:
     container_name: 'smart-contract-verifier'
     env_file:
       -  ../envs/common-smart-contract-verifier.env
-    ports:
-      - 8150:8050
+#    ports:
+#      - 8150:8050
+

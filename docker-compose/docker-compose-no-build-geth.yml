@@ -29,7 +29,7 @@ services:
     env_file:
       -  ./envs/common-blockscout.env
     ports:
-      - 4000:4000
+      - 127.0.0.1:4000:4000
     volumes:
       - ${HOME}/blockscout-data/logs:/app/logs
 
@@ -47,3 +47,4 @@ services:
     extends:
       file: ./services/docker-compose-sig-provider.yml
       service: sig-provider
+
