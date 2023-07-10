@@ -10,11 +10,6 @@ services:
     extends:
       file: ./services/docker-compose-db.yml
       service: db
-    shm_size: "256MB"
-    command: >
-      postgres -c 'max_connections=250'
-      && postgres -c 'shared_buffers=256MB'
-      && postgres -c 'work_mem=128MB'
 
   blockscout:
     depends_on:
@@ -36,7 +31,7 @@ services:
     ports:
       - 4000:4000
     volumes:
-      - ./logs/:/app/logs/
+      - ${HOME}/blockscout-data/logs:/app/logs
 
   smart-contract-verifier:
     extends:

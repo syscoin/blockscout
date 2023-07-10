@@ -32,4 +32,4 @@ services:
     ports:
       - 8153:8050
     volumes:
-      - ./stats-db-data:/var/lib/postgresql/data/
+      - ${HOME}/blockscout-data/stats-db-data:/var/lib/postgresql/data
