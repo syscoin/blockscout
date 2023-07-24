@@ -8,5 +8,6 @@ services:
     container_name: 'visualizer'
     env_file:
       -  ../envs/common-visualizer.env
-    ports:
-      - 8152:8050
+#    ports:
+#      - 8152:8050
+
