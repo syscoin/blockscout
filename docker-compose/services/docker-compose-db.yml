@@ -10,6 +10,8 @@ services:
       postgres -c 'max_connections=250'
       && postgres -c 'shared_buffers=256MB'
       && postgres -c 'work_mem=128MB'
+      && postgres -c 'maintenance_work_mem=256MB'
+      && postgres -c 'max_wal_size=2GB'
     environment:
         POSTGRES_PASSWORD: ''
         POSTGRES_USER: 'postgres'
