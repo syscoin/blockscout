@@ -6,5 +6,6 @@ services:
     pull_policy: always
     restart: always
     container_name: 'sig-provider'
-    ports:
-      - 8151:8050
+#    ports:
+#      - 8151:8050
+

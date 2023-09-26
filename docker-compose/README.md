@@ -11,7 +11,7 @@ Runs Blockscout locally in Docker containers with [docker-compose](https://githu
 ## Building Docker containers from source
 
 ```bash
-docker-compose up --build
+docker-compose up -d --build
 ```
 
 This command uses by-default `docker-compose.yml`, which builds the explorer into the Docker image and runs 6 Docker containers:
