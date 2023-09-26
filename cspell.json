@@ -521,7 +521,13 @@
         "Nerg",
         "Sepolia",
         "relpages",
-        "regclass"
+        "regclass",
+        "secp",
+        "qwertyuioiuytrewertyuioiuytrertyuio",
+        "urlset",
+        "lastmod",
+        "qitmeer",
+        "meer",
     ],
     "enableFiletypes": [
         "dotenv",

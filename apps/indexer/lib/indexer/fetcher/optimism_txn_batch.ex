@@ -438,6 +438,8 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
         with {:new_channel_id, true} <- {:new_channel_id, frame.channel_id != last_channel_id},
              {:frame_number_valid, true} <- {:frame_number_valid, frame.number == last_frame_number + 1},
+             {:channel_id_valid, true} <-
+               {:channel_id_valid, frame.channel_id == current_channel_id or current_channel_id == <<>>},
              {:frame_is_last, true} <- {:frame_is_last, frame.is_last},
              l1_timestamp = get_block_timestamp_by_number(t.block_number, blocks_params),
              {batches_parsed, seq} =
@@ -471,6 +473,10 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
               {last_channel_id, current_channel_id},
               incomplete_frame_sequence_acc
             )
+
+          {:channel_id_valid, false} ->
+            # ignore invalid frame
+            {:cont, {:ok, batches, sequences, incomplete_frame_sequence_acc, last_channel_id, current_channel_id}}
 
           {:frame_is_last, false} ->
             handle_not_last_valid_frame(
@@ -582,6 +588,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
   end
 
 
+  # credo:disable-for-next-line /Complexity/
   defp handle_invalid_frame_number(
          last_frame_number,
          frame,
@@ -596,6 +603,8 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
       frame.number == 0 ->
         # the new frame rewrites the previous frame sequence
         # todo: handle last frame (when frame.is_last == true)
+        clear_future_frames()
+
         {:cont,
          {:ok, batches, sequences,
           %{bytes: frame.data, last_frame_number: frame.number, l1_transaction_hashes: [tx.hash]}, last_channel_id,
@@ -605,10 +614,19 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
         # ignore duplicated frame with the number greater than 0
         {:cont, {:ok, batches, sequences, empty_incomplete_frame_sequence(), last_channel_id, current_channel_id}}
 
-      frame.number > last_frame_number && frame.channel_id == current_channel_id ->
-        # temporarily save future frame to handle that later
-        future_frame = %{frame: frame, l1_tx_hash: tx.hash, l1_timestamp: l1_timestamp}
-        put_future_frame(current_channel_id, future_frame)
+      frame.number > last_frame_number ->
+        if frame.channel_id == current_channel_id do
+          # temporarily save future frame to handle that later
+          future_frame = %{frame: frame, l1_tx_hash: tx.hash, l1_timestamp: l1_timestamp}
+          put_future_frame(current_channel_id, future_frame)
+        end
+
+        # ignore invalid frame
+        {:cont, {:ok, batches, sequences, incomplete_frame_sequence, last_channel_id, current_channel_id}}
+
+      frame.number < last_frame_number && frame.channel_id == current_channel_id &&
+          :binary.match(incomplete_frame_sequence.bytes, frame.data) != :nomatch ->
+        # ignore the frame (with the same channel id) which has already been concatenated before
         {:cont, {:ok, batches, sequences, incomplete_frame_sequence, last_channel_id, current_channel_id}}
 
       frame.number == last_frame_number && frame.channel_id == current_channel_id ->
@@ -1051,11 +1069,15 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     end
   end
 
+  defp clear_future_frames do
+    :ets.delete_all_objects(@future_frames_table_name)
+  end
+
   defp get_future_frames(channel_id, clear \\ false) do
     with info when info != :undefined <- :ets.info(@future_frames_table_name),
          [{_, value}] <- :ets.lookup(@future_frames_table_name, channel_id) do
       if clear do
-        :ets.delete_all_objects(@future_frames_table_name)
+        clear_future_frames()
       end
 
       value
