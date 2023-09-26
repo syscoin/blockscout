@@ -57,8 +57,8 @@ RUN mkdir -p /opt/release \
 ##############################################################
 FROM bitwalker/alpine-elixir-phoenix:1.14
 
-ENV RELEASE_VERSION=5.2.1
-ENV BLOCKSCOUT_VERSION=v5.2.1-beta
+ENV RELEASE_VERSION=5.2.3
+ENV BLOCKSCOUT_VERSION=v5.2.3-beta
 
 RUN apk --no-cache --update add jq curl
 
