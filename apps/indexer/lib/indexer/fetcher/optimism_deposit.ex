@@ -58,6 +58,11 @@ defmodule Indexer.Fetcher.OptimismDeposit do
 
   @impl GenServer
   def init(_args) do
+    {:ok, %{}, {:continue, :ok}}
+  end
+
+  @impl GenServer
+  def handle_continue(:ok, state) do
     Logger.metadata(fetcher: @fetcher_name)
 
     env = Application.get_all_env(:indexer)[__MODULE__]
@@ -66,7 +71,7 @@ defmodule Indexer.Fetcher.OptimismDeposit do
     optimism_l1_rpc = optimism_env[:optimism_l1_rpc]
 
     with {:start_block_l1_undefined, false} <- {:start_block_l1_undefined, is_nil(env[:start_block_l1])},
-         {:optimism_portal_valid, true} <- {:optimism_portal_valid, Helper.is_address_correct?(optimism_portal)},
+         {:optimism_portal_valid, true} <- {:optimism_portal_valid, Helper.address_correct?(optimism_portal)},
          {:rpc_l1_undefined, false} <- {:rpc_l1_undefined, is_nil(optimism_l1_rpc)},
          start_block_l1 <- parse_integer(env[:start_block_l1]),
          false <- is_nil(start_block_l1),
@@ -87,7 +92,7 @@ defmodule Indexer.Fetcher.OptimismDeposit do
         Process.send(self(), :fetch, [])
       end
 
-      {:ok,
+      {:noreply,
        %__MODULE__{
          start_block: start_block,
          from_block: start_block,
@@ -99,37 +104,37 @@ defmodule Indexer.Fetcher.OptimismDeposit do
     else
       {:start_block_l1_undefined, true} ->
         # the process shouldn't start if the start block is not defined
-        :ignore
+        {:stop, :normal, state}
 
       {:start_block_l1_valid, false} ->
         Logger.error("Invalid L1 Start Block value. Please, check the value and op_deposits table.")
-        :ignore
+        {:stop, :normal, state}
 
       {:rpc_l1_undefined, true} ->
         Logger.error("L1 RPC URL is not defined.")
-        :ignore
+        {:stop, :normal, state}
 
       {:optimism_portal_valid, false} ->
         Logger.error("OptimismPortal contract address is invalid or undefined.")
-        :ignore
+        {:stop, :normal, state}
 
       {:error, error_data} ->
         Logger.error(
           "Cannot get last L1 transaction from RPC by its hash or last safe block due to the RPC error: #{inspect(error_data)}"
         )
 
-        :ignore
+        {:stop, :normal, state}
 
       {:l1_tx_not_found, true} ->
         Logger.error(
           "Cannot find last L1 transaction from RPC by its hash. Probably, there was a reorg on L1 chain. Please, check op_deposits table."
         )
 
-        :ignore
+        {:stop, :normal, state}
 
       _ ->
         Logger.error("Optimism deposits L1 Start Block is invalid or zero.")
-        :ignore
+        {:stop, :normal, state}
     end
   end
 
@@ -158,13 +163,13 @@ defmodule Indexer.Fetcher.OptimismDeposit do
               json_rpc_named_arguments,
               3
             )},
-         _ = Optimism.log_blocks_chunk_handling(from_block, to_block, start_block, safe_block, nil, "L1"),
+         _ = Helper.log_blocks_chunk_handling(from_block, to_block, start_block, safe_block, nil, "L1"),
          deposits = events_to_deposits(logs, json_rpc_named_arguments),
          {:import, {:ok, _imported}} <-
            {:import, Chain.import(%{optimism_deposits: %{params: deposits}, timeout: :infinity})} do
       Publisher.broadcast(%{optimism_deposits: deposits}, :realtime)
 
-      Optimism.log_blocks_chunk_handling(
+      Helper.log_blocks_chunk_handling(
         from_block,
         to_block,
         start_block,
@@ -336,6 +341,11 @@ defmodule Indexer.Fetcher.OptimismDeposit do
     end
   end
 
+  @impl GenServer
+  def terminate(:normal, _state) do
+    :ok
+  end
+
   defp handle_new_logs(logs, json_rpc_named_arguments) do
     {reorgs, logs_to_parse, min_block, max_block, cnt} =
       logs
@@ -361,7 +371,7 @@ defmodule Indexer.Fetcher.OptimismDeposit do
 
       Publisher.broadcast(%{optimism_deposits: deposits}, :realtime)
 
-      Optimism.log_blocks_chunk_handling(
+      Helper.log_blocks_chunk_handling(
         min_block,
         max_block,
         min_block,

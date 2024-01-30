@@ -3,14 +3,16 @@ defmodule BlockScoutWeb.API.V2.StatsController do
 
   alias BlockScoutWeb.API.V2.Helper
   alias BlockScoutWeb.Chain.MarketHistoryChartController
+  alias EthereumJSONRPC.Variant
   alias Explorer.{Chain, Market}
   alias Explorer.Chain.Address.Counters
   alias Explorer.Chain.Cache.Block, as: BlockCache
-  alias Explorer.Chain.Cache.{GasPriceOracle, GasUsage}
+  alias Explorer.Chain.Cache.{GasPriceOracle, GasUsage, RootstockLockedBTC}
   alias Explorer.Chain.Cache.Transaction, as: TransactionCache
   alias Explorer.Chain.Supply.RSK
   alias Explorer.Chain.Transaction.History.TransactionStats
   alias Explorer.Counters.AverageBlockTime
+  alias Plug.Conn
   alias Timex.Duration
 
   @api_true [api?: true]
@@ -25,7 +27,7 @@ defmodule BlockScoutWeb.API.V2.StatsController do
           :standard
       end
 
-    exchange_rate = Market.get_coin_exchange_rate()
+    exchange_rate_from_db = Market.get_coin_exchange_rate()
 
     transaction_stats = Helper.get_transaction_stats()
 
@@ -33,6 +35,21 @@ defmodule BlockScoutWeb.API.V2.StatsController do
       case GasPriceOracle.get_gas_prices() do
         {:ok, gas_prices} ->
           gas_prices
+
+        _ ->
+          nil
+      end
+
+    coin_price_change =
+      case Market.fetch_recent_history() do
+        [today, yesterday | _] ->
+          today.closing_price && yesterday.closing_price &&
+            today.closing_price
+            |> Decimal.div(yesterday.closing_price)
+            |> Decimal.sub(1)
+            |> Decimal.mult(100)
+            |> Decimal.to_float()
+            |> Float.ceil(2)
 
         _ ->
           nil
@@ -47,15 +64,21 @@ defmodule BlockScoutWeb.API.V2.StatsController do
         "total_addresses" => @api_true |> Counters.address_estimated_count() |> to_string(),
         "total_transactions" => TransactionCache.estimated_count() |> to_string(),
         "average_block_time" => AverageBlockTime.average_block_time() |> Duration.to_milliseconds(),
-        "coin_price" => exchange_rate.usd_value,
+        "coin_price" => exchange_rate_from_db.usd_value,
+        "coin_price_change_percentage" => coin_price_change,
         "total_gas_used" => GasUsage.total() |> to_string(),
         "transactions_today" => Enum.at(transaction_stats, 0).number_of_transactions |> to_string(),
         "gas_used_today" => Enum.at(transaction_stats, 0).gas_used,
         "gas_prices" => gas_prices,
+        "gas_prices_update_in" => GasPriceOracle.update_in(),
+        "gas_price_updated_at" => GasPriceOracle.get_updated_at(),
         "static_gas_price" => gas_price,
-        "market_cap" => Helper.market_cap(market_cap_type, exchange_rate),
+        "market_cap" => Helper.market_cap(market_cap_type, exchange_rate_from_db),
+        "tvl" => exchange_rate_from_db.tvl_usd,
         "network_utilization_percentage" => network_utilization_percentage()
       }
+      |> add_rootstock_locked_btc()
+      |> backward_compatibility(conn)
     )
   end
 
@@ -112,7 +135,7 @@ defmodule BlockScoutWeb.API.V2.StatsController do
         data ->
           data
       end
-      |> Enum.map(fn day -> Map.take(day, [:closing_price, :market_cap, :date]) end)
+      |> Enum.map(fn day -> Map.take(day, [:closing_price, :market_cap, :tvl, :date]) end)
 
     market_history_data =
       MarketHistoryChartController.encode_market_history_data(price_history_data, current_total_supply)
@@ -122,5 +145,28 @@ defmodule BlockScoutWeb.API.V2.StatsController do
       # todo: remove when new frontend is ready to use data from chart_data property only
       available_supply: current_total_supply
     })
+  end
+
+  defp add_rootstock_locked_btc(stats) do
+    with "rsk" <- Variant.get(),
+         rootstock_locked_btc when not is_nil(rootstock_locked_btc) <- RootstockLockedBTC.get_locked_value() do
+      stats |> Map.put("rootstock_locked_btc", rootstock_locked_btc)
+    else
+      _ -> stats
+    end
+  end
+
+  defp backward_compatibility(response, conn) do
+    case Conn.get_req_header(conn, "updated-gas-oracle") do
+      ["true"] ->
+        response
+
+      _ ->
+        response
+        |> Map.update("gas_prices", nil, fn
+          gas_prices ->
+            %{slow: gas_prices[:slow][:price], average: gas_prices[:average][:price], fast: gas_prices[:fast][:price]}
+        end)
+    end
   end
 end

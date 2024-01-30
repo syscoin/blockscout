@@ -7,7 +7,6 @@ defmodule Indexer.Transform.TokenTransfers do
 
   import Explorer.Chain.SmartContract, only: [burn_address_hash_string: 0]
 
-  alias ABI.TypeDecoder
   alias Explorer.{Helper, Repo}
   alias Explorer.Chain.{Token, TokenTransfer}
   alias Indexer.Fetcher.TokenTotalSupplyUpdater
@@ -81,22 +80,18 @@ defmodule Indexer.Transform.TokenTransfers do
       end)
       |> Map.new()
 
-    existing_tokens =
-      existing_token_types_map
-      |> Map.keys()
-      |> Enum.map(&to_string/1)
-
-    new_tokens_token_transfers = Enum.filter(token_transfers, &(&1.token_contract_address_hash not in existing_tokens))
-
-    new_token_types_map =
-      new_tokens_token_transfers
+    token_types_map =
+      token_transfers
       |> Enum.group_by(& &1.token_contract_address_hash)
       |> Enum.map(fn {contract_address_hash, transfers} ->
         {contract_address_hash, define_token_type(transfers)}
       end)
       |> Map.new()
 
-    actual_token_types_map = Map.merge(new_token_types_map, existing_token_types_map)
+    actual_token_types_map =
+      Map.merge(token_types_map, existing_token_types_map, fn _k, new_type, old_type ->
+        if token_type_priority(old_type) > token_type_priority(new_type), do: old_type, else: new_type
+      end)
 
     actual_tokens =
       Enum.map(tokens, fn %{contract_address_hash: hash} = token ->
@@ -125,17 +120,23 @@ defmodule Indexer.Transform.TokenTransfers do
   end
 
   defp do_parse(log, %{tokens: tokens, token_transfers: token_transfers} = acc, type \\ :erc20_erc721) do
-    {token, token_transfer} =
+    parse_result =
       if type != :erc1155 do
         parse_params(log)
       else
         parse_erc1155_params(log)
       end
 
-    %{
-      tokens: [token | tokens],
-      token_transfers: [token_transfer | token_transfers]
-    }
+    case parse_result do
+      {token, token_transfer} ->
+        %{
+          tokens: [token | tokens],
+          token_transfers: [token_transfer | token_transfers]
+        }
+
+      nil ->
+        acc
+    end
   rescue
     e in [FunctionClauseError, MatchError] ->
       Logger.error(fn ->
@@ -271,25 +272,29 @@ defmodule Indexer.Transform.TokenTransfers do
       ) do
     [token_ids, values] = Helper.decode_data(data, [{:array, {:uint, 256}}, {:array, {:uint, 256}}])
 
-    token_transfer = %{
-      block_number: log.block_number,
-      block_hash: log.block_hash,
-      log_index: log.index,
-      from_address_hash: truncate_address_hash(third_topic),
-      to_address_hash: truncate_address_hash(fourth_topic),
-      token_contract_address_hash: log.address_hash,
-      transaction_hash: log.transaction_hash,
-      token_type: "ERC-1155",
-      token_ids: token_ids,
-      amounts: values
-    }
+    if token_ids == [] || values == [] do
+      nil
+    else
+      token_transfer = %{
+        block_number: log.block_number,
+        block_hash: log.block_hash,
+        log_index: log.index,
+        from_address_hash: truncate_address_hash(third_topic),
+        to_address_hash: truncate_address_hash(fourth_topic),
+        token_contract_address_hash: log.address_hash,
+        transaction_hash: log.transaction_hash,
+        token_type: "ERC-1155",
+        token_ids: token_ids,
+        amounts: values
+      }
 
-    token = %{
-      contract_address_hash: log.address_hash,
-      type: "ERC-1155"
-    }
+      token = %{
+        contract_address_hash: log.address_hash,
+        type: "ERC-1155"
+      }
 
-    {token, token_transfer}
+      {token, token_transfer}
+    end
   end
 
   def parse_erc1155_params(%{third_topic: third_topic, fourth_topic: fourth_topic, data: data} = log) do

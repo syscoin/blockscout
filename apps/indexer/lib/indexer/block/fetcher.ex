@@ -33,14 +33,18 @@ defmodule Indexer.Block.Fetcher do
 
   alias Indexer.Transform.{
     AddressCoinBalances,
-    AddressCoinBalancesDaily,
     Addresses,
     AddressTokenBalances,
     MintTransfers,
     OptimismWithdrawals,
+    TokenInstances,
     TokenTransfers,
     TransactionActions
   }
+
+  alias Indexer.Transform.PolygonEdge.{DepositExecutes, Withdrawals}
+
+  alias Indexer.Transform.Shibarium.Bridge, as: ShibariumBridge
 
   alias Indexer.Transform.Blocks, as: TransformBlocks
 
@@ -144,6 +148,18 @@ defmodule Indexer.Block.Fetcher do
          %{mint_transfers: mint_transfers} = MintTransfers.parse(logs),
          optimism_withdrawals =
            if(callback_module == Indexer.Block.Realtime.Fetcher, do: OptimismWithdrawals.parse(logs), else: []),
+         polygon_edge_withdrawals =
+           if(callback_module == Indexer.Block.Realtime.Fetcher, do: Withdrawals.parse(logs), else: []),
+         polygon_edge_deposit_executes =
+           if(callback_module == Indexer.Block.Realtime.Fetcher,
+             do: DepositExecutes.parse(logs),
+             else: []
+           ),
+         shibarium_bridge_operations =
+           if(callback_module == Indexer.Block.Realtime.Fetcher,
+             do: ShibariumBridge.parse(blocks, transactions_with_receipts, logs),
+             else: []
+           ),
          %FetchedBeneficiaries{params_set: beneficiary_params_set, errors: beneficiaries_errors} =
            fetch_beneficiaries(blocks, transactions_with_receipts, json_rpc_named_arguments),
          addresses =
@@ -152,6 +168,7 @@ defmodule Indexer.Block.Fetcher do
              blocks: blocks,
              logs: logs,
              mint_transfers: mint_transfers,
+             shibarium_bridge_operations: shibarium_bridge_operations,
              token_transfers: token_transfers,
              transactions: transactions_with_receipts,
              transaction_actions: transaction_actions,
@@ -166,38 +183,48 @@ defmodule Indexer.Block.Fetcher do
              withdrawals: withdrawals_params
            }
            |> AddressCoinBalances.params_set(),
-         coin_balances_params_daily_set =
-           %{
-             coin_balances_params: coin_balances_params_set,
-             blocks: blocks
-           }
-           |> AddressCoinBalancesDaily.params_set(),
          beneficiaries_with_gas_payment =
            beneficiaries_with_gas_payment(blocks, beneficiary_params_set, transactions_with_receipts),
          address_token_balances = AddressTokenBalances.params_set(%{token_transfers_params: token_transfers}),
          transaction_actions =
            Enum.map(transaction_actions, fn action -> Map.put(action, :data, Map.delete(action.data, :block_number)) end),
+         token_instances = TokenInstances.params_set(%{token_transfers_params: token_transfers}),
+         basic_import_options = %{
+           addresses: %{params: addresses},
+           address_coin_balances: %{params: coin_balances_params_set},
+           address_token_balances: %{params: address_token_balances},
+           address_current_token_balances: %{
+             params: address_token_balances |> MapSet.to_list() |> TokenBalances.to_address_current_token_balances()
+           },
+           blocks: %{params: blocks},
+           block_second_degree_relations: %{params: block_second_degree_relations_params},
+           block_rewards: %{errors: beneficiaries_errors, params: beneficiaries_with_gas_payment},
+           logs: %{params: logs},
+           optimism_withdrawals: %{params: optimism_withdrawals},
+           token_transfers: %{params: token_transfers},
+           tokens: %{params: tokens},
+           transactions: %{params: transactions_with_receipts},
+           withdrawals: %{params: withdrawals_params},
+           token_instances: %{params: token_instances}
+         },
+         import_options =
+           (case Application.get_env(:explorer, :chain_type) do
+              "polygon_edge" ->
+                basic_import_options
+                |> Map.put_new(:polygon_edge_withdrawals, %{params: polygon_edge_withdrawals})
+                |> Map.put_new(:polygon_edge_deposit_executes, %{params: polygon_edge_deposit_executes})
+
+              "shibarium" ->
+                basic_import_options
+                |> Map.put_new(:shibarium_bridge_operations, %{params: shibarium_bridge_operations})
+
+              _ ->
+                basic_import_options
+            end),
          {:ok, inserted} <-
            __MODULE__.import(
              state,
-             %{
-               addresses: %{params: addresses},
-               address_coin_balances: %{params: coin_balances_params_set},
-               address_coin_balances_daily: %{params: coin_balances_params_daily_set},
-               address_token_balances: %{params: address_token_balances},
-               address_current_token_balances: %{
-                 params: address_token_balances |> MapSet.to_list() |> TokenBalances.to_address_current_token_balances()
-               },
-               blocks: %{params: blocks},
-               block_second_degree_relations: %{params: block_second_degree_relations_params},
-               block_rewards: %{errors: beneficiaries_errors, params: beneficiaries_with_gas_payment},
-               logs: %{params: logs},
-               optimism_withdrawals: %{params: optimism_withdrawals},
-               token_transfers: %{params: token_transfers},
-               tokens: %{on_conflict: :nothing, params: tokens},
-               transactions: %{params: transactions_with_receipts},
-               withdrawals: %{params: withdrawals_params}
-             }
+             import_options
            ),
          {:tx_actions, {:ok, inserted_tx_actions}} <-
            {:tx_actions,
@@ -398,15 +425,15 @@ defmodule Indexer.Block.Fetcher do
 
   def fetch_beneficiaries_manual(block, transactions) do
     block
-    |> Chain.block_reward_by_parts(transactions)
+    |> Block.block_reward_by_parts(transactions)
     |> reward_parts_to_beneficiaries()
   end
 
   defp reward_parts_to_beneficiaries(reward_parts) do
     reward =
       reward_parts.static_reward
-      |> Wei.sum(reward_parts.txn_fees)
-      |> Wei.sub(reward_parts.burned_fees)
+      |> Wei.sum(reward_parts.transaction_fees)
+      |> Wei.sub(reward_parts.burnt_fees)
       |> Wei.sum(reward_parts.uncle_reward)
 
     MapSet.new([

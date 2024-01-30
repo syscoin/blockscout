@@ -40,13 +40,18 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
 
   @impl GenServer
   def init(args) do
+    json_rpc_named_arguments = args[:json_rpc_named_arguments]
+    {:ok, %{}, {:continue, json_rpc_named_arguments}}
+  end
+
+  @impl GenServer
+  def handle_continue(json_rpc_named_arguments, state) do
     Logger.metadata(fetcher: @fetcher_name)
 
-    json_rpc_named_arguments = args[:json_rpc_named_arguments]
     env = Application.get_all_env(:indexer)[__MODULE__]
 
     with {:start_block_l2_undefined, false} <- {:start_block_l2_undefined, is_nil(env[:start_block_l2])},
-         {:message_passer_valid, true} <- {:message_passer_valid, Helper.is_address_correct?(env[:message_passer])},
+         {:message_passer_valid, true} <- {:message_passer_valid, Helper.address_correct?(env[:message_passer])},
          start_block_l2 = parse_integer(env[:start_block_l2]),
          false <- is_nil(start_block_l2),
          true <- start_block_l2 > 0,
@@ -59,7 +64,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
          {:l2_tx_not_found, false} <- {:l2_tx_not_found, !is_nil(last_l2_transaction_hash) && is_nil(last_l2_tx)} do
       Process.send(self(), :continue, [])
 
-      {:ok,
+      {:noreply,
        %{
          start_block: max(start_block_l2, last_l2_block_number),
          start_block_l2: start_block_l2,
@@ -70,31 +75,31 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
     else
       {:start_block_l2_undefined, true} ->
         # the process shouldn't start if the start block is not defined
-        :ignore
+        {:stop, :normal, state}
 
       {:message_passer_valid, false} ->
         Logger.error("L2ToL1MessagePasser contract address is invalid or not defined.")
-        :ignore
+        {:stop, :normal, state}
 
       {:start_block_l2_valid, false} ->
         Logger.error("Invalid L2 Start Block value. Please, check the value and op_withdrawals table.")
-        :ignore
+        {:stop, :normal, state}
 
       {:error, error_data} ->
         Logger.error("Cannot get last L2 transaction from RPC by its hash due to RPC error: #{inspect(error_data)}")
 
-        :ignore
+        {:stop, :normal, state}
 
       {:l2_tx_not_found, true} ->
         Logger.error(
           "Cannot find last L2 transaction from RPC by its hash. Probably, there was a reorg on L2 chain. Please, check op_withdrawals table."
         )
 
-        :ignore
+        {:stop, :normal, state}
 
       _ ->
         Logger.error("Withdrawals L2 Start Block is invalid or zero.")
-        :ignore
+        {:stop, :normal, state}
     end
   end
 
@@ -145,8 +150,14 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
   def event_to_withdrawal(second_topic, data, l2_transaction_hash, l2_block_number) do
     [_value, _gas_limit, _data, hash] = decode_data(data, [{:uint, 256}, {:uint, 256}, :bytes, {:bytes, 32}])
 
+    msg_nonce =
+      second_topic
+      |> Helper.log_topic_to_string()
+      |> quantity_to_integer()
+      |> Decimal.new()
+
     %{
-      msg_nonce: Decimal.new(quantity_to_integer(second_topic)),
+      msg_nonce: msg_nonce,
       hash: hash,
       l2_transaction_hash: l2_transaction_hash,
       l2_block_number: quantity_to_integer(l2_block_number)
@@ -196,7 +207,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
           from(log in Log,
             select: {log.second_topic, log.data, log.transaction_hash, log.block_number},
             where:
-              log.first_topic == @message_passed_event and log.address_hash == ^message_passer and
+              log.first_topic == ^@message_passed_event and log.address_hash == ^message_passer and
                 log.block_number >= ^block_start and log.block_number <= ^block_end
           )
 
@@ -255,7 +266,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
           min(chunk_start + Optimism.get_logs_range_size() - 1, l2_block_end)
         end
 
-      Optimism.log_blocks_chunk_handling(chunk_start, chunk_end, l2_block_start, l2_block_end, nil, "L2")
+      Helper.log_blocks_chunk_handling(chunk_start, chunk_end, l2_block_start, l2_block_end, nil, "L2")
 
       withdrawals_count =
         find_and_save_withdrawals(
@@ -266,7 +277,7 @@ defmodule Indexer.Fetcher.OptimismWithdrawal do
           json_rpc_named_arguments
         )
 
-      Optimism.log_blocks_chunk_handling(
+      Helper.log_blocks_chunk_handling(
         chunk_start,
         chunk_end,
         l2_block_start,

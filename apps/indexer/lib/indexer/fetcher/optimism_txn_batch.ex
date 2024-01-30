@@ -43,17 +43,27 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
   @impl GenServer
   def init(args) do
-    Logger.metadata(fetcher: @fetcher_name)
+    {:ok, %{json_rpc_named_arguments_l2: args[:json_rpc_named_arguments]}, {:continue, nil}}
+  end
 
-    json_rpc_named_arguments_l2 = args[:json_rpc_named_arguments]
+  @impl GenServer
+  def handle_continue(_, state) do
+    Logger.metadata(fetcher: @fetcher_name)
+    # two seconds pause needed to avoid exceeding Supervisor restart intensity when DB issues
+    Process.send_after(self(), :init_with_delay, 2000)
+    {:noreply, state}
+  end
+
+  @impl GenServer
+  def handle_info(:init_with_delay, %{json_rpc_named_arguments_l2: json_rpc_named_arguments_l2} = state) do
     env = Application.get_all_env(:indexer)[__MODULE__]
 
     with {:start_block_l1_undefined, false} <- {:start_block_l1_undefined, is_nil(env[:start_block_l1])},
          {:reorg_monitor_started, true} <- {:reorg_monitor_started, !is_nil(Process.whereis(Indexer.Fetcher.Optimism))},
          optimism_l1_rpc = Application.get_all_env(:indexer)[Indexer.Fetcher.Optimism][:optimism_l1_rpc],
          {:rpc_l1_undefined, false} <- {:rpc_l1_undefined, is_nil(optimism_l1_rpc)},
-         {:batch_inbox_valid, true} <- {:batch_inbox_valid, Helper.is_address_correct?(env[:batch_inbox])},
-         {:batch_submitter_valid, true} <- {:batch_submitter_valid, Helper.is_address_correct?(env[:batch_submitter])},
+         {:batch_inbox_valid, true} <- {:batch_inbox_valid, Helper.address_correct?(env[:batch_inbox])},
+         {:batch_submitter_valid, true} <- {:batch_submitter_valid, Helper.address_correct?(env[:batch_submitter])},
          start_block_l1 = parse_integer(env[:start_block_l1]),
          false <- is_nil(start_block_l1),
          true <- start_block_l1 > 0,
@@ -73,7 +83,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
       Process.send(self(), :continue, [])
 
-      {:ok,
+      {:noreply,
        %{
          batch_inbox: String.downcase(env[:batch_inbox]),
          batch_submitter: String.downcase(env[:batch_submitter]),
@@ -90,49 +100,49 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
     else
       {:start_block_l1_undefined, true} ->
         # the process shouldn't start if the start block is not defined
-        :ignore
+        {:stop, :normal, state}
 
       {:reorg_monitor_started, false} ->
         Logger.error("Cannot start this process as reorg monitor in Indexer.Fetcher.Optimism is not started.")
-        :ignore
+        {:stop, :normal, state}
 
       {:rpc_l1_undefined, true} ->
         Logger.error("L1 RPC URL is not defined.")
-        :ignore
+        {:stop, :normal, state}
 
       {:batch_inbox_valid, false} ->
         Logger.error("Batch Inbox address is invalid or not defined.")
-        :ignore
+        {:stop, :normal, state}
 
       {:batch_submitter_valid, false} ->
         Logger.error("Batch Submitter address is invalid or not defined.")
-        :ignore
+        {:stop, :normal, state}
 
       {:start_block_l1_valid, false} ->
         Logger.error("Invalid L1 Start Block value. Please, check the value and op_transaction_batches table.")
-        :ignore
+        {:stop, :normal, state}
 
       {:chunk_size_valid, false} ->
         Logger.error("Invalid blocks chunk size value.")
-        :ignore
+        {:stop, :normal, state}
 
       {:error, error_data} ->
         Logger.error(
           "Cannot get last safe block or block timestamp by its number due to RPC error: #{inspect(error_data)}"
         )
 
-        :ignore
+        {:stop, :normal, state}
 
       {:l1_tx_not_found, true} ->
         Logger.error(
           "Cannot find last L1 transaction from RPC by its hash. Probably, there was a reorg on L1 chain. Please, check op_transaction_batches table."
         )
 
-        :ignore
+        {:stop, :normal, state}
 
       _ ->
         Logger.error("Batch Start Block is invalid or zero.")
-        :ignore
+        {:stop, :normal, state}
     end
   end
 
@@ -168,7 +178,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
 
           {new_incomplete_frame_sequence, new_last_channel_id, new_current_channel_id} =
             if chunk_end >= chunk_start do
-              Optimism.log_blocks_chunk_handling(chunk_start, chunk_end, start_block, end_block, nil, "L1")
+              Helper.log_blocks_chunk_handling(chunk_start, chunk_end, start_block, end_block, nil, "L1")
 
               {:ok, batches, sequences, new_incomplete_frame_sequence, new_last_channel_id, new_current_channel_id} =
                 get_txn_batches(
@@ -191,7 +201,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
                   timeout: :infinity
                 })
 
-              Optimism.log_blocks_chunk_handling(
+              Helper.log_blocks_chunk_handling(
                 chunk_start,
                 chunk_end,
                 start_block,
@@ -471,7 +481,7 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
               batches,
               sequences,
               {last_channel_id, current_channel_id},
-              incomplete_frame_sequence_acc
+              {incomplete_frame_sequence_acc, json_rpc_named_arguments_l2}
             )
 
           {:channel_id_valid, false} ->
@@ -597,12 +607,35 @@ defmodule Indexer.Fetcher.OptimismTxnBatch do
          batches,
          sequences,
          {last_channel_id, current_channel_id},
-         incomplete_frame_sequence
+         {incomplete_frame_sequence, json_rpc_named_arguments_l2}
        ) do
     cond do
-      frame.number == 0 ->
+      frame.number == 0 && frame.is_last ->
         # the new frame rewrites the previous frame sequence
-        # todo: handle last frame (when frame.is_last == true)
+        clear_future_frames()
+
+        {batches_parsed, seq} =
+          get_new_batches_and_sequence(
+            frame.data,
+            sequences,
+            [tx.hash],
+            l1_timestamp,
+            json_rpc_named_arguments_l2,
+            false
+          )
+
+        if batches_parsed != :error do
+          {:cont,
+           {:ok, batches ++ batches_parsed, [seq | sequences], empty_incomplete_frame_sequence(), frame.channel_id,
+            <<>>}}
+        else
+          {:halt,
+           {:error,
+            "Invalid RLP in a frame. Tx hash of the frame: #{tx.hash}. Compressed frame data: 0x#{Base.encode16(frame.data, case: :lower)}"}}
+        end
+
+      frame.number == 0 && !frame.is_last ->
+        # the new frame rewrites the previous frame sequence
         clear_future_frames()
 
         {:cont,

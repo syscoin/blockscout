@@ -62,13 +62,17 @@ defmodule Indexer.Fetcher.Optimism do
 
       json_rpc_named_arguments = json_rpc_named_arguments(optimism_l1_rpc)
 
-      {:ok, block_check_interval, _} = get_block_check_interval(json_rpc_named_arguments)
-
-      Process.send(self(), :reorg_monitor, [])
-
-      {:ok,
-       %{block_check_interval: block_check_interval, json_rpc_named_arguments: json_rpc_named_arguments, prev_latest: 0}}
+      {:ok, %{}, {:continue, json_rpc_named_arguments}}
     end
+  end
+
+  @impl GenServer
+  def handle_continue(json_rpc_named_arguments, _state) do
+    {:ok, block_check_interval, _} = get_block_check_interval(json_rpc_named_arguments)
+    Process.send(self(), :reorg_monitor, [])
+
+    {:noreply,
+     %{block_check_interval: block_check_interval, json_rpc_named_arguments: json_rpc_named_arguments, prev_latest: 0}}
   end
 
   @impl GenServer
@@ -200,7 +204,7 @@ defmodule Indexer.Fetcher.Optimism do
     ]
   end
 
-  def init(env, contract_address, caller)
+  def init_continue(env, contract_address, caller)
       when caller in [Indexer.Fetcher.OptimismWithdrawalEvent, Indexer.Fetcher.OptimismOutputRoot] do
     {contract_name, table_name, start_block_note} =
       if caller == Indexer.Fetcher.OptimismWithdrawalEvent do
@@ -213,7 +217,7 @@ defmodule Indexer.Fetcher.Optimism do
          {:reorg_monitor_started, true} <- {:reorg_monitor_started, !is_nil(Process.whereis(Indexer.Fetcher.Optimism))},
          optimism_l1_rpc = Application.get_all_env(:indexer)[Indexer.Fetcher.Optimism][:optimism_l1_rpc],
          {:rpc_l1_undefined, false} <- {:rpc_l1_undefined, is_nil(optimism_l1_rpc)},
-         {:contract_is_valid, true} <- {:contract_is_valid, Helper.is_address_correct?(contract_address)},
+         {:contract_is_valid, true} <- {:contract_is_valid, Helper.address_correct?(contract_address)},
          start_block_l1 = parse_integer(env[:start_block_l1]),
          false <- is_nil(start_block_l1),
          true <- start_block_l1 > 0,
@@ -230,7 +234,7 @@ defmodule Indexer.Fetcher.Optimism do
 
       Process.send(self(), :continue, [])
 
-      {:ok,
+      {:noreply,
        %{
          contract_address: contract_address,
          block_check_interval: block_check_interval,
@@ -241,79 +245,41 @@ defmodule Indexer.Fetcher.Optimism do
     else
       {:start_block_l1_undefined, true} ->
         # the process shouldn't start if the start block is not defined
-        :ignore
+        {:stop, :normal, %{}}
 
       {:reorg_monitor_started, false} ->
         Logger.error("Cannot start this process as reorg monitor in Indexer.Fetcher.Optimism is not started.")
-        :ignore
+        {:stop, :normal, %{}}
 
       {:rpc_l1_undefined, true} ->
         Logger.error("L1 RPC URL is not defined.")
-        :ignore
+        {:stop, :normal, %{}}
 
       {:contract_is_valid, false} ->
         Logger.error("#{contract_name} contract address is invalid or not defined.")
-        :ignore
+        {:stop, :normal, %{}}
 
       {:start_block_l1_valid, false} ->
         Logger.error("Invalid L1 Start Block value. Please, check the value and #{table_name} table.")
-        :ignore
+        {:stop, :normal, %{}}
 
       {:error, error_data} ->
         Logger.error(
           "Cannot get last L1 transaction from RPC by its hash, last safe block, or block timestamp by its number due to RPC error: #{inspect(error_data)}"
         )
 
-        :ignore
+        {:stop, :normal, %{}}
 
       {:l1_tx_not_found, true} ->
         Logger.error(
           "Cannot find last L1 transaction from RPC by its hash. Probably, there was a reorg on L1 chain. Please, check #{table_name} table."
         )
 
-        :ignore
+        {:stop, :normal, %{}}
 
       _ ->
         Logger.error("#{start_block_note} Start Block is invalid or zero.")
-        :ignore
-    end
-  end
-
-  def log_blocks_chunk_handling(chunk_start, chunk_end, start_block, end_block, items_count, layer) do
-    is_start = is_nil(items_count)
-
-    {type, found} =
-      if is_start do
-        {"Start", ""}
-      else
-        {"Finish", " Found #{items_count}."}
-      end
-
-    target_range =
-      if chunk_start != start_block or chunk_end != end_block do
-        progress =
-          if is_start do
-            ""
-          else
-            percentage =
-              (chunk_end - start_block + 1)
-              |> Decimal.div(end_block - start_block + 1)
-              |> Decimal.mult(100)
-              |> Decimal.round(2)
-              |> Decimal.to_string()
-
-            " Progress: #{percentage}%"
-          end
-
-        " Target range: #{start_block}..#{end_block}.#{progress}"
-      else
-        ""
-      end
-
-    if chunk_start == chunk_end do
-      Logger.info("#{type} handling #{layer} block ##{chunk_start}.#{found}#{target_range}")
-    else
-      Logger.info("#{type} handling #{layer} block range #{chunk_start}..#{chunk_end}.#{found}#{target_range}")
+        {:stop, :normal, %{}}
     end
   end
 
