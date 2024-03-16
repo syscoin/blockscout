@@ -1,4 +1,4 @@
-FROM hexpm/elixir:1.14.5-erlang-25.3.2.8-alpine-3.18.4 AS builder
+FROM hexpm/elixir:1.14.5-erlang-24.2.2-alpine-3.18.2 AS builder
 
 WORKDIR /app
 
@@ -23,6 +23,8 @@ ARG AMPLITUDE_API_KEY
 ARG AMPLITUDE_URL
 ARG CHAIN_TYPE
 ENV CHAIN_TYPE=${CHAIN_TYPE}
+ARG BRIDGED_TOKENS_ENABLED
+ENV BRIDGED_TOKENS_ENABLED=${BRIDGED_TOKENS_ENABLED}
 
 # Cache elixir deps
 ADD mix.exs mix.lock ./
@@ -64,12 +66,14 @@ RUN mkdir -p /opt/release \
   && mv _build/${MIX_ENV}/rel/blockscout /opt/release
 
 ##############################################################
-FROM hexpm/elixir:1.14.5-erlang-25.3.2.8-alpine-3.18.4
+FROM hexpm/elixir:1.14.5-erlang-24.2.2-alpine-3.18.2
 
 ARG RELEASE_VERSION
 ENV RELEASE_VERSION=${RELEASE_VERSION}
 ARG CHAIN_TYPE
 ENV CHAIN_TYPE=${CHAIN_TYPE}
+ARG BRIDGED_TOKENS_ENABLED
+ENV BRIDGED_TOKENS_ENABLED=${BRIDGED_TOKENS_ENABLED}
 ARG BLOCKSCOUT_VERSION
 ENV BLOCKSCOUT_VERSION=${BLOCKSCOUT_VERSION}
 

@@ -42,6 +42,18 @@ defmodule BlockScoutWeb.API.V2.SmartContractView do
     end)
   end
 
+  def render("audit_reports.json", %{reports: reports}) do
+    %{"items" => Enum.map(reports, &prepare_audit_report/1), "next_page_params" => nil}
+  end
+
+  defp prepare_audit_report(report) do
+    %{
+      "audit_company_name" => report.audit_company_name,
+      "audit_report_url" => report.audit_report_url,
+      "audit_publish_date" => report.audit_publish_date
+    }
+  end
+
   def prepare_function_response(outputs, names, contract_address_hash) do
     case outputs do
       {:error, %{code: code, message: message, data: data}} ->
@@ -182,7 +194,8 @@ defmodule BlockScoutWeb.API.V2.SmartContractView do
         if(smart_contract_verified,
           do: format_constructor_arguments(target_contract.abi, target_contract.constructor_arguments)
         ),
-      "language" => smart_contract_language(smart_contract)
+      "language" => smart_contract_language(smart_contract),
+      "license_type" => smart_contract.license_type
     }
     |> Map.merge(bytecode_info(address))
   end
@@ -292,7 +305,8 @@ defmodule BlockScoutWeb.API.V2.SmartContractView do
       "market_cap" => token && token.circulating_market_cap,
       "has_constructor_args" => !is_nil(smart_contract.constructor_arguments),
       "coin_balance" =>
-        if(smart_contract.address.fetched_coin_balance, do: smart_contract.address.fetched_coin_balance.value)
+        if(smart_contract.address.fetched_coin_balance, do: smart_contract.address.fetched_coin_balance.value),
+      "license_type" => smart_contract.license_type
     }
   end
 
@@ -341,6 +355,6 @@ defmodule BlockScoutWeb.API.V2.SmartContractView do
   end
 
   def render_json(value, _type) do
-    value
+    to_string(value)
   end
 end

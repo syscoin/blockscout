@@ -9,7 +9,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
     ]
 
   alias Explorer.Chain
-  alias Explorer.Chain.{OptimismDeposit, OptimismOutputRoot, OptimismTxnBatch, OptimismWithdrawal}
+  alias Explorer.Chain.Optimism.{Deposit, OutputRoot, TxnBatch, Withdrawal}
 
   action_fallback(BlockScoutWeb.API.V2.FallbackController)
 
@@ -18,7 +18,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
       params
       |> paging_options()
       |> Keyword.put(:api?, true)
-      |> Chain.list_txn_batches()
+      |> TxnBatch.list()
       |> split_list_by_page()
 
     next_page_params = next_page_params(next_page, batches, params)
@@ -32,7 +32,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
   end
 
   def txn_batches_count(conn, _params) do
-    items_count(conn, OptimismTxnBatch)
+    items_count(conn, TxnBatch)
   end
 
   def output_roots(conn, params) do
@@ -40,7 +40,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
       params
       |> paging_options()
       |> Keyword.put(:api?, true)
-      |> Chain.list_output_roots()
+      |> OutputRoot.list()
       |> split_list_by_page()
 
     next_page_params = next_page_params(next_page, roots, params)
@@ -54,7 +54,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
   end
 
   def output_roots_count(conn, _params) do
-    items_count(conn, OptimismOutputRoot)
+    items_count(conn, OutputRoot)
   end
 
   def deposits(conn, params) do
@@ -62,7 +62,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
       params
       |> paging_options()
       |> Keyword.put(:api?, true)
-      |> Chain.list_optimism_deposits()
+      |> Deposit.list()
       |> split_list_by_page()
 
     next_page_params = next_page_params(next_page, deposits, params)
@@ -76,7 +76,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
   end
 
   def deposits_count(conn, _params) do
-    items_count(conn, OptimismDeposit)
+    items_count(conn, Deposit)
   end
 
   def withdrawals(conn, params) do
@@ -84,7 +84,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
       params
       |> paging_options()
       |> Keyword.put(:api?, true)
-      |> Chain.list_optimism_withdrawals()
+      |> Withdrawal.list()
       |> split_list_by_page()
 
     next_page_params = next_page_params(next_page, withdrawals, params)
@@ -98,7 +98,7 @@ defmodule BlockScoutWeb.API.V2.OptimismController do
   end
 
   def withdrawals_count(conn, _params) do
-    items_count(conn, OptimismWithdrawal)
+    items_count(conn, Withdrawal)
   end
 
   defp items_count(conn, module) do

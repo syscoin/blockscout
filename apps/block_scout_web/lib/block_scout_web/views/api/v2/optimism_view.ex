@@ -6,6 +6,7 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
   alias BlockScoutWeb.API.V2.Helper
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.{Block, Transaction}
+  alias Explorer.Chain.Optimism.Withdrawal
 
   def render("optimism_txn_batches.json", %{
         batches: batches,
@@ -30,7 +31,6 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
           %{
             "l2_block_number" => batch.l2_block_number,
             "tx_count" => tx_count,
-            "epoch_number" => batch.epoch_number,
             "l1_tx_hashes" => batch.frame_sequence.l1_transaction_hashes,
             "l1_timestamp" => batch.frame_sequence.l1_timestamp
           }
@@ -125,7 +125,7 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
               _ -> {nil, nil}
             end
 
-          {status, challenge_period_end} = Chain.optimism_withdrawal_status(w)
+          {status, challenge_period_end} = Withdrawal.status(w)
 
           %{
             "msg_nonce_raw" => Decimal.to_string(w.msg_nonce, :normal),
@@ -145,5 +145,36 @@ defmodule BlockScoutWeb.API.V2.OptimismView do
 
   def render("optimism_items_count.json", %{count: count}) do
     count
+  end
+
+  def extend_transaction_json_response(out_json, %Transaction{} = transaction) do
+    out_json
+    |> add_optional_transaction_field(transaction, :l1_fee)
+    |> add_optional_transaction_field(transaction, :l1_fee_scalar)
+    |> add_optional_transaction_field(transaction, :l1_gas_price)
+    |> add_optional_transaction_field(transaction, :l1_gas_used)
+    |> add_optimism_fields(transaction.hash)
+  end
+
+  defp add_optional_transaction_field(out_json, transaction, field) do
+    case Map.get(transaction, field) do
+      nil -> out_json
+      value -> Map.put(out_json, Atom.to_string(field), value)
+    end
+  end
+
+  defp add_optimism_fields(out_json, transaction_hash) do
+    withdrawals =
+      transaction_hash
+      |> Withdrawal.transaction_statuses()
+      |> Enum.map(fn {nonce, status, l1_transaction_hash} ->
+        %{
+          "nonce" => nonce,
+          "status" => status,
+          "l1_transaction_hash" => l1_transaction_hash
+        }
+      end)
+
+    Map.put(out_json, "op_withdrawals", withdrawals)
   end
 end

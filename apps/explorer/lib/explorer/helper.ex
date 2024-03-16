@@ -44,6 +44,30 @@ defmodule Explorer.Helper do
   def parse_integer(_integer_string), do: nil
 
   @doc """
+  Parses number from hex string or decimal number string
+  """
+  @spec parse_number(binary() | nil) :: integer() | nil
+  def parse_number(nil), do: nil
+
+  def parse_number(number) when is_integer(number) do
+    number
+  end
+
+  def parse_number("0x" <> hex_number) do
+    {number, ""} = Integer.parse(hex_number, 16)
+
+    number
+  end
+
+  def parse_number(""), do: 0
+
+  def parse_number(string_number) do
+    {number, ""} = Integer.parse(string_number, 10)
+
+    number
+  end
+
+  @doc """
     Function to preload a `struct` for each element of the `list`.
     You should specify a primary key for a `struct` in `references_field`,
     and the list element's foreign key in `foreign_key_field`.
@@ -95,4 +119,29 @@ defmodule Explorer.Helper do
       decoded -> decoded
     end
   end
+
+  @doc """
+  Checks if input is a valid URL
+  """
+  @spec validate_url(String.t() | nil) :: {:ok, String.t()} | :error
+  def validate_url(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{host: nil} -> :error
+      _ -> {:ok, url}
+    end
+  end
+
+  def validate_url(_), do: :error
+
+  @doc """
+    Validate url
+  """
+  @spec valid_url?(String.t()) :: boolean()
+  def valid_url?(string) when is_binary(string) do
+    uri = URI.parse(string)
+
+    !is_nil(uri.scheme) && !is_nil(uri.host)
+  end
+
+  def valid_url?(_), do: false
 end

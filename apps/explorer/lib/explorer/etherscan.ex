@@ -4,7 +4,7 @@ defmodule Explorer.Etherscan do
   """
 
   import Ecto.Query,
-    only: [from: 2, where: 3, or_where: 3, union: 2, subquery: 1, order_by: 3, limit: 2, offset: 2, preload: 3]
+    only: [from: 2, where: 3, union: 2, subquery: 1, order_by: 3, limit: 2, offset: 2, preload: 3]
 
   import Explorer.Chain.SmartContract, only: [burn_address_hash_string: 0]
 
@@ -18,8 +18,8 @@ defmodule Explorer.Etherscan do
     order_by_direction: :desc,
     page_number: 1,
     page_size: 10_000,
-    start_block: nil,
-    end_block: nil,
+    startblock: nil,
+    endblock: nil,
     start_timestamp: nil,
     end_timestamp: nil
   }
@@ -103,10 +103,11 @@ defmodule Explorer.Etherscan do
   @spec list_internal_transactions(Hash.Full.t()) :: [map()]
   def list_internal_transactions(%Hash{byte_count: unquote(Hash.Full.byte_count())} = transaction_hash) do
     query =
-      if DenormalizationHelper.denormalization_finished?() do
+      if DenormalizationHelper.transactions_denormalization_finished?() do
         from(
           it in InternalTransaction,
           inner_join: transaction in assoc(it, :transaction),
+          where: not is_nil(transaction.block_hash),
           where: it.transaction_hash == ^transaction_hash,
           limit: 10_000,
           select:
@@ -228,10 +229,11 @@ defmodule Explorer.Etherscan do
       |> Repo.replica().all()
     else
       query =
-        if DenormalizationHelper.denormalization_finished?() do
+        if DenormalizationHelper.transactions_denormalization_finished?() do
           from(
             it in InternalTransaction,
             inner_join: transaction in assoc(it, :transaction),
+            where: not is_nil(transaction.block_hash),
             order_by: [{^options.order_by_direction, transaction.block_number}],
             limit: ^options.page_size,
             offset: ^offset(options),
@@ -291,14 +293,14 @@ defmodule Explorer.Etherscan do
   @doc """
     Gets a list of ERC-721 token transfers for a given address_hash. If contract_address_hash is not nil, transfers will be filtered by contract.
   """
-  @spec list_nft_token_transfers(Hash.Address.t(), Hash.Address.t() | nil, map()) :: [TokenTransfer.t()]
-  def list_nft_token_transfers(
+  @spec list_nft_transfers(Hash.Address.t(), Hash.Address.t() | nil, map()) :: [TokenTransfer.t()]
+  def list_nft_transfers(
         %Hash{byte_count: unquote(Hash.Address.byte_count())} = address_hash,
         contract_address_hash,
         options \\ @default_options
       ) do
     options
-    |> base_nft_token_transfers_query(contract_address_hash)
+    |> base_nft_transfers_query(contract_address_hash)
     |> where([tt], tt.from_address_hash == ^address_hash or tt.to_address_hash == ^address_hash)
     |> Repo.replica().all()
   end
@@ -306,17 +308,17 @@ defmodule Explorer.Etherscan do
   @doc """
     Gets a list of ERC-721 token transfers for a given token contract_address_hash.
   """
-  @spec list_nft_token_transfers_by_token(Hash.Address.t(), map()) :: [TokenTransfer.t()]
-  def list_nft_token_transfers_by_token(
+  @spec list_nft_transfers_by_token(Hash.Address.t(), map()) :: [TokenTransfer.t()]
+  def list_nft_transfers_by_token(
         %Hash{byte_count: unquote(Hash.Address.byte_count())} = contract_address_hash,
         options \\ @default_options
       ) do
     options
-    |> base_nft_token_transfers_query(contract_address_hash)
+    |> base_nft_transfers_query(contract_address_hash)
     |> Repo.replica().all()
   end
 
-  defp base_nft_token_transfers_query(options, contract_address_hash) do
+  defp base_nft_transfers_query(options, contract_address_hash) do
     options = Map.merge(@default_options, options)
 
     TokenTransfer.erc_721_token_transfers_query()
@@ -470,10 +472,11 @@ defmodule Explorer.Etherscan do
 
   defp list_transactions(address_hash, max_block_number, options) do
     query =
-      if DenormalizationHelper.denormalization_finished?() do
+      if DenormalizationHelper.transactions_denormalization_finished?() do
         from(
           t in Transaction,
           where: not is_nil(t.block_hash),
+          where: t.block_consensus == true,
           order_by: [{^options.order_by_direction, t.block_number}],
           limit: ^options.page_size,
           offset: ^offset(options),
@@ -486,6 +489,7 @@ defmodule Explorer.Etherscan do
         from(
           t in Transaction,
           inner_join: b in assoc(t, :block),
+          where: b.consensus == true,
           order_by: [{^options.order_by_direction, t.block_number}],
           limit: ^options.page_size,
           offset: ^offset(options),
@@ -515,15 +519,18 @@ defmodule Explorer.Etherscan do
   end
 
   defp where_address_match(query, address_hash, _) do
-    query
-    |> where([t], t.to_address_hash == ^address_hash)
-    |> or_where([t], t.from_address_hash == ^address_hash)
-    |> or_where([t], t.created_contract_address_hash == ^address_hash)
+    where(
+      query,
+      [t],
+      t.to_address_hash == ^address_hash or t.from_address_hash == ^address_hash or
+        t.created_contract_address_hash == ^address_hash
+    )
   end
 
   @token_transfer_fields ~w(
     block_number
     block_hash
+    block_consensus
     token_contract_address_hash
     transaction_hash
     from_address_hash
@@ -560,11 +567,13 @@ defmodule Explorer.Etherscan do
       |> where_contract_address_match(contract_address_hash)
 
     wrapped_query =
-      if DenormalizationHelper.denormalization_finished?() do
+      if DenormalizationHelper.transactions_denormalization_finished?() do
         from(
           tt in subquery(tt_specific_token_query),
           inner_join: t in Transaction,
-          on: tt.transaction_hash == t.hash and tt.block_number == t.block_number and tt.block_hash == t.block_hash,
+          on:
+            tt.transaction_hash == t.hash and tt.block_number == t.block_number and tt.block_hash == t.block_hash and
+              t.block_consensus == true,
           order_by: [{^options.order_by_direction, tt.block_number}, {^options.order_by_direction, tt.token_log_index}],
           select: %{
             token_contract_address_hash: tt.token_contract_address_hash,
@@ -598,6 +607,7 @@ defmodule Explorer.Etherscan do
           inner_join: t in Transaction,
           on: tt.transaction_hash == t.hash and tt.block_number == t.block_number and tt.block_hash == t.block_hash,
           inner_join: b in assoc(t, :block),
+          where: b.consensus == true,
           order_by: [{^options.order_by_direction, tt.block_number}, {^options.order_by_direction, tt.token_log_index}],
           select: %{
             token_contract_address_hash: tt.token_contract_address_hash,
@@ -631,54 +641,54 @@ defmodule Explorer.Etherscan do
     |> Repo.replica().all()
   end
 
-  defp where_start_block_match(query, %{start_block: nil}), do: query
+  defp where_start_block_match(query, %{startblock: nil}), do: query
 
-  defp where_start_block_match(query, %{start_block: start_block}) do
+  defp where_start_block_match(query, %{startblock: start_block}) do
     where(query, [..., block], block.number >= ^start_block)
   end
 
-  defp where_end_block_match(query, %{end_block: nil}), do: query
+  defp where_end_block_match(query, %{endblock: nil}), do: query
 
-  defp where_end_block_match(query, %{end_block: end_block}) do
+  defp where_end_block_match(query, %{endblock: end_block}) do
     where(query, [..., block], block.number <= ^end_block)
   end
 
-  defp where_start_transaction_block_match(query, %{start_block: nil}), do: query
+  defp where_start_transaction_block_match(query, %{startblock: nil}), do: query
 
-  defp where_start_transaction_block_match(query, %{start_block: start_block} = params) do
-    if DenormalizationHelper.denormalization_finished?() do
+  defp where_start_transaction_block_match(query, %{startblock: start_block} = params) do
+    if DenormalizationHelper.transactions_denormalization_finished?() do
       where(query, [transaction], transaction.block_number >= ^start_block)
     else
       where_start_block_match(query, params)
     end
   end
 
-  defp where_end_transaction_block_match(query, %{end_block: nil}), do: query
+  defp where_end_transaction_block_match(query, %{endblock: nil}), do: query
 
-  defp where_end_transaction_block_match(query, %{end_block: end_block} = params) do
-    if DenormalizationHelper.denormalization_finished?() do
+  defp where_end_transaction_block_match(query, %{endblock: end_block} = params) do
+    if DenormalizationHelper.transactions_denormalization_finished?() do
       where(query, [transaction], transaction.block_number <= ^end_block)
     else
       where_end_block_match(query, params)
     end
   end
 
-  defp where_start_block_match_tt(query, %{start_block: nil}), do: query
+  defp where_start_block_match_tt(query, %{startblock: nil}), do: query
 
-  defp where_start_block_match_tt(query, %{start_block: start_block}) do
+  defp where_start_block_match_tt(query, %{startblock: start_block}) do
     where(query, [tt], tt.block_number >= ^start_block)
   end
 
-  defp where_end_block_match_tt(query, %{end_block: nil}), do: query
+  defp where_end_block_match_tt(query, %{endblock: nil}), do: query
 
-  defp where_end_block_match_tt(query, %{end_block: end_block}) do
+  defp where_end_block_match_tt(query, %{endblock: end_block}) do
     where(query, [tt], tt.block_number <= ^end_block)
   end
 
   defp where_start_timestamp_match(query, %{start_timestamp: nil}), do: query
 
   defp where_start_timestamp_match(query, %{start_timestamp: start_timestamp}) do
-    if DenormalizationHelper.denormalization_finished?() do
+    if DenormalizationHelper.transactions_denormalization_finished?() do
       where(query, [transaction], ^start_timestamp <= transaction.block_timestamp)
     else
       where(query, [..., block], ^start_timestamp <= block.timestamp)
@@ -688,7 +698,7 @@ defmodule Explorer.Etherscan do
   defp where_end_timestamp_match(query, %{end_timestamp: nil}), do: query
 
   defp where_end_timestamp_match(query, %{end_timestamp: end_timestamp}) do
-    if DenormalizationHelper.denormalization_finished?() do
+    if DenormalizationHelper.transactions_denormalization_finished?() do
       where(query, [transaction], transaction.block_timestamp <= ^end_timestamp)
     else
       where(query, [..., block], block.timestamp <= ^end_timestamp)
