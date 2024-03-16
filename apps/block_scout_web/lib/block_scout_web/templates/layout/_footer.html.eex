@@ -19,13 +19,12 @@
 
     <div class="row">
       <div class="col-xs-12 col-lg-3">
-        <p class="footer-info-text"><%= gettext("Rollux is the EVM-equivalent optimistic rollup built by SYS Labs, providing the security of Bitcoin’s mining network and Syscoin’s Layer 1 finality and data availability. Secure, scalable, very low fees, supports Layer 3s for fractal scaling.") %></p>
-        <p class="footer-info-text"><b><%= gettext("Powered by Syscoin, Fueled by $SYS") %></b></p>
+        <p class="footer-info-text"><%= gettext("Blockscout is a tool for inspecting and analyzing EVM based blockchains. Blockchain explorer for Ethereum Networks.") %></p>
         <div class="footer-social-icons">
           <a href="<%= Application.get_env(:block_scout_web, :footer)[:github_link] %>" rel="noreferrer" target="_blank" class="footer-social-icon" title='<%= gettext("Github") %>'>
             <div class="footer-social-icon-container fontawesome-icon github"></div>
           </a>
-          <a href="https://twitter.com/RolluxL2/" rel="noreferrer" target="_blank" class="footer-social-icon" title='<%= gettext("Twitter") %>'>
+          <a href="https://www.twitter.com/blockscoutcom/" rel="noreferrer" target="_blank" class="footer-social-icon" title='<%= gettext("Twitter") %>'>
             <div class="footer-social-icon-container fontawesome-icon twitter"></div>
           </a>
           <%= if Application.get_env(:block_scout_web, :footer)[:telegram_link_enabled] && Application.get_env(:block_scout_web, :footer)[:telegram_link] do %>
@@ -37,13 +36,13 @@
       </div>
 
       <div class="col-xs-12 col-md-4 col-lg-<%= col_size %> footer-list">
-        <h3>Rollux</h3>
+        <h3>BlockScout</h3>
         <ul>
           <li><a href="<%= issue_link() %>" rel="noreferrer" class="footer-link" target="_blank"><%= gettext("Submit an Issue") %></a></li>
           <li><a href="<%= Application.get_env(:block_scout_web, :footer)[:github_link] %>" rel="noreferrer" class="footer-link"><%= gettext("Contribute") %></a></li>
-          <li><a href="<%= Application.get_env(:block_scout_web, :footer)[:chat_link] %>" rel="noreferrer" class="footer-link"><%= gettext("Chat (#rollux)") %></a></li>
+          <li><a href="<%= Application.get_env(:block_scout_web, :footer)[:chat_link] %>" rel="noreferrer" class="footer-link"><%= gettext("Chat (#blockscout)") %></a></li>
           <%= if Application.get_env(:block_scout_web, :footer)[:forum_link_enabled] && Application.get_env(:block_scout_web, :footer)[:forum_link] do %>
-            <li><a href="<%= Application.get_env(:block_scout_web, :footer)[:forum_link] %>" rel="noreferrer" class="footer-link" target="_blank"><%= gettext("Forum") %></a></li>
+            <li><a href="<%= Application.get_env(:block_scout_web, :footer)[:forum_link] %>" rel="noreferrer" class="footer-link"><%= gettext("Forum") %></a></li>
           <% end %>
           <%= render BlockScoutWeb.LayoutView, "_add_chain_to_mm.html" %>
         </ul>
@@ -91,7 +90,7 @@
     <%= unless ignore_version?(version) do %>
       <% release_link = release_link(version) %>
       <div>
-        <%= gettext("Blockscout version") %>: <%= release_link %>
+        <%= gettext("Version") %>: <%= release_link %>
       </div>
     <% end %>
   </div>

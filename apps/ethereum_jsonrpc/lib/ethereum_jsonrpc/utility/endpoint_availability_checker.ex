@@ -4,7 +4,6 @@ defmodule EthereumJSONRPC.Utility.EndpointAvailabilityChecker do
   """
 
   use GenServer
-  require Logger
 
   require Logger
 

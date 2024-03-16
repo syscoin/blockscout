@@ -274,7 +274,6 @@ defmodule BlockScoutWeb.ApiRouter do
 
     scope "/main-page" do
       get("/blocks", V2.MainPageController, :blocks)
-      get("/optimism-deposits", V2.MainPageController, :optimism_deposits)
       get("/transactions", V2.MainPageController, :transactions)
       get("/transactions/watchlist", V2.MainPageController, :watchlist_transactions)
       get("/indexing-status", V2.MainPageController, :indexing_status)
@@ -315,17 +314,6 @@ defmodule BlockScoutWeb.ApiRouter do
         get("/withdrawals", V2.OptimismController, :withdrawals)
         get("/withdrawals/count", V2.OptimismController, :withdrawals_count)
       end
-    end
-
-    scope "/optimism" do
-      get("/txn-batches", V2.OptimismController, :txn_batches)
-      get("/txn-batches/count", V2.OptimismController, :txn_batches_count)
-      get("/output-roots", V2.OptimismController, :output_roots)
-      get("/output-roots/count", V2.OptimismController, :output_roots_count)
-      get("/deposits", V2.OptimismController, :deposits)
-      get("/deposits/count", V2.OptimismController, :deposits_count)
-      get("/withdrawals", V2.OptimismController, :withdrawals)
-      get("/withdrawals/count", V2.OptimismController, :withdrawals_count)
     end
 
     scope "/polygon-edge" do

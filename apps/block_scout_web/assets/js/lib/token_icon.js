@@ -10,9 +10,6 @@ function getTokenIconUrl (chainID, addressHash) {
     case '100':
       chainName = 'xdai'
       break
-    case '57':
-      chainName = 'syscoin'
-      break
     default:
       chainName = null
       break

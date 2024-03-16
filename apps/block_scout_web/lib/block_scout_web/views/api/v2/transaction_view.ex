@@ -452,31 +452,7 @@ defmodule BlockScoutWeb.API.V2.TransactionView do
     }
 
     result
-    |> add_optional_transaction_field(transaction, :l1_fee)
-    |> add_optional_transaction_field(transaction, :l1_fee_scalar)
-    |> add_optional_transaction_field(transaction, :l1_gas_price)
-    |> add_optional_transaction_field(transaction, :l1_gas_used)
-    |> add_optimism_fields(transaction.hash, single_tx?)
     |> chain_type_fields(transaction, single_tx?, conn, watchlist_names)
-  end
-
-  defp add_optimism_fields(result, transaction_hash, single_tx?) do
-    if single_tx? do
-      withdrawals =
-        transaction_hash
-        |> Chain.optimism_withdrawal_transaction_statuses()
-        |> Enum.map(fn {nonce, status, l1_transaction_hash} ->
-          %{
-            "nonce" => nonce,
-            "status" => status,
-            "l1_transaction_hash" => l1_transaction_hash
-          }
-        end)
-
-      Map.put(result, "op_withdrawals", withdrawals)
-    else
-      result
-    end
   end
 
   def token_transfers(_, _conn, false), do: nil
