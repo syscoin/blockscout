@@ -30,8 +30,7 @@ jobs:
 
       - name: Add upstream
         run: |
-          git remote | grep -q "^upstream$" || \
-            git remote add upstream git@github.com:blockscout/blockscout.git
+          git remote add upstream git@github.com:blockscout/blockscout.git
           git fetch --prune --tags upstream main
 
       - name: Ensure local tracking branch
