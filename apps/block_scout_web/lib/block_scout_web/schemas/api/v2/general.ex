@@ -229,7 +229,7 @@ defmodule BlockScoutWeb.Schemas.API.V2.General do
   @spec batch_number_param() :: Parameter.t()
   def batch_number_param do
     %Parameter{
-      name: :batch_number,
+      name: :batch_number_param,
       in: :path,
       schema: %Schema{type: :integer, minimum: 0},
       required: true,
@@ -482,15 +482,29 @@ defmodule BlockScoutWeb.Schemas.API.V2.General do
   end
 
   @doc """
-  Returns a parameter definition for API key used in rate limiting.
+  Returns a parameter definition for API key for sensitive endpoints in the query string.
+  """
+  @spec admin_api_key_param_query() :: Parameter.t()
+  def admin_api_key_param_query do
+    %Parameter{
+      name: :api_key,
+      in: :query,
+      schema: %Schema{type: :string},
+      required: false,
+      description: "API key required for sensitive endpoints"
+    }
+  end
+
+  @doc """
+  Returns a parameter definition for API key header for sensitive endpoints.
   """
   @spec admin_api_key_param() :: Parameter.t()
   def admin_api_key_param do
     %Parameter{
-      name: :x_api_key,
+      name: :"x-api-key",
       in: :header,
       schema: %Schema{type: :string},
-      required: true,
+      required: false,
       description: "API key required for sensitive endpoints"
     }
   end
@@ -518,7 +532,7 @@ defmodule BlockScoutWeb.Schemas.API.V2.General do
       in: :query,
       schema: %Schema{type: :string},
       required: false,
-      description: "API key for rate limiting",
+      description: "API key for rate limiting or for sensitive endpoints",
       name: :apikey
     }
   end
