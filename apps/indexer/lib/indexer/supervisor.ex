@@ -49,6 +49,7 @@ defmodule Indexer.Supervisor do
     Token,
     TokenBalance,
     TokenCountersUpdater,
+    TokenInstanceImporter,
     TokenTotalSupplyUpdater,
     TokenUpdater,
     TransactionAction,
@@ -273,6 +274,7 @@ defmodule Indexer.Supervisor do
         {PendingTransactionsSanitizer, [[json_rpc_named_arguments: json_rpc_named_arguments]]},
         {TokenTotalSupplyUpdater, [[]]},
         AddressImporter,
+        TokenInstanceImporter,
 
         # Notifications cleaner
         configure(EventNotificationsCleaner, [[]]),
